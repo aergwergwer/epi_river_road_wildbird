@@ -1,0 +1,12 @@
+{
+  // Cloudflare Workers(정적 파일 포함) 배포 설정. Pages 대시보드로 배포할 때는 쓰이지 않는다.
+  "name": "epi-river-road-wildbird",
+  "main": "_worker.js",
+  "compatibility_date": "2026-11-27",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    // /api/* 만 워커가 처리하고, 나머지는 정적 파일을 바로 내려준다(_routes.json 과 같은 역할).
+    "run_worker_first": ["/api/*"]
+  }
+}

@@ -1,0 +1,37 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: #edf3f5; color: #173440; font: 15px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif; }
+.top { background: #123641; color: #fff; padding: 22px max(20px, calc((100% - 1200px) / 2)); }
+.top h1 { margin: 0; font-size: 24px; }
+.top p { margin: 6px 0 0; color: #d0f5ee; }
+main { max-width: 1240px; margin: 0 auto; padding: 20px; display: grid; gap: 16px; }
+.card { background: #fff; border: 1px solid #d6e4e8; border-radius: 14px; padding: 18px 20px; }
+h2 { margin: 0 0 12px; font-size: 18px; }
+h3 { margin: 12px 0 8px; font-size: 15px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 10px; }
+label { display: grid; gap: 4px; font-weight: 650; font-size: 14px; }
+input, select, button { font: inherit; padding: 9px 10px; border: 1px solid #a8bfc5; border-radius: 8px; background: #fff; color: inherit; }
+input[type=number] { width: 150px; }
+#pointName { width: 220px; }
+#addrQuery { width: min(380px, 80vw); }
+button { background: #076e64; color: #fff; border: 0; font-weight: 650; cursor: pointer; }
+button:disabled { background: #e3ebed; color: #52666c; cursor: default; }
+button.primary { padding: 11px 22px; }
+details { margin-top: 12px; }
+summary { cursor: pointer; font-weight: 650; }
+.note { margin: 10px 0 0; color: #46616a; font-size: 14px; }
+.note.error { color: #b3261e; }
+.note.warn { color: #8a5a00; }
+.candidates { display: grid; gap: 8px; margin-top: 10px; }
+.candidate { border: 1px solid #d6e4e8; border-radius: 8px; padding: 10px 12px; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.candidate p { margin: 0; font-size: 14px; }
+.candidate button { padding: 7px 12px; white-space: nowrap; }
+.slides { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 18px; }
+canvas { width: 100%; height: auto; border: 1px solid #d6e4e8; border-radius: 8px; background: #eef3f4; }
+table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 14px; }
+caption { text-align: left; font-weight: 700; padding-bottom: 4px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e2eaec; }
+th { background: #f2f7f8; }
+td:last-child, th:last-child { text-align: right; }
+footer { max-width: 1240px; margin: 0 auto; padding: 0 20px 28px; color: #5b7078; font-size: 13px; }
+[hidden] { display: none !important; }
+@media (max-width: 600px) { .slides { grid-template-columns: 1fr; } }
