@@ -73,6 +73,7 @@ async function until(cdp, expression, label, timeoutMs = 120000) {
 const scenarios = [
   // 기본 설정: 하천·도로는 브이월드 위성, 철새도래지는 브이월드 일반지도
   { name: 'seoul-satellite', lat: 37.5665, lon: 126.978, pointName: '서울시청', waterBg: 'Satellite', birdBg: 'Base', key: 'TESTKEY', waterRadius: 5000, birdRadius: 20000 },
+  { name: 'naju-gis', gis: true, lat: 35.0161, lon: 126.7108, pointName: '나주 육용오리(11.26)', waterBg: 'Satellite', birdBg: 'Base', key: 'TESTKEY', waterRadius: 5000, birdRadius: 50000 },
   { name: 'naju-sample', lat: 35.0161, lon: 126.7108, pointName: '나주 육용오리(11.26)', waterBg: 'Satellite', birdBg: 'Base', key: 'TESTKEY', waterRadius: 5000, birdRadius: 50000 },
   { name: 'gwangju-osm', lat: 35.1595, lon: 126.8526, pointName: '광주 영산강 인근', waterBg: 'osm', birdBg: 'osm', key: '', waterRadius: 3000, birdRadius: 50000 },
   { name: 'seoul-counts-fail', lat: 37.5665, lon: 126.978, pointName: '개체수 실패', waterBg: 'none', birdBg: 'none', key: '', waterRadius: 5000, birdRadius: 20000, fail: 'counts' },
@@ -118,7 +119,14 @@ try {
     await cdp.evaluate(`(()=>{window.__blobs=[];const o=URL.createObjectURL;URL.createObjectURL=b=>{window.__blobs.push(b);return o(b)};
       const set=(id,v)=>{const e=document.getElementById(id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))};
       set('pointName',${JSON.stringify(s.pointName)});set('lat','${s.lat}');set('lon','${s.lon}');set('waterRadius','${s.waterRadius}');set('birdRadius','${s.birdRadius}');set('vworldKey','${s.key}');set('waterBackground','${s.waterBg}');set('birdBackground','${s.birdBg}');
-      document.getElementById('run').click();})()`);
+      })()`);
+    if (s.gis) {
+      const xlsx = fs.readFileSync(new URL('./fixtures/gis-sample.xlsx', import.meta.url)).toString('base64');
+      await cdp.evaluate(`(async()=>{const bin=atob('${xlsx}');const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));
+        const dt=new DataTransfer();dt.items.add(new File([bytes],'gis-sample.xlsx'));const input=document.getElementById('gisFile');input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+      await until(cdp, `document.getElementById('gisStatus').textContent.includes('지점 6개를 읽었습니다')`, 'GIS 엑셀 읽기');
+    }
+    await cdp.evaluate(`document.getElementById('run').click()`);
     await until(cdp, `!document.getElementById('results').hidden || document.getElementById('status').className.includes('error')`, '조회');
     const rows = id => `[...document.querySelectorAll('#${id} tbody tr')].map(r=>r.innerText.replace(/\\s+/g,' '))`;
     const checks = id => `(()=>{const b=[...document.querySelectorAll('#${id} tbody input[type=checkbox]')];return {n:b.length,on:b.filter(x=>x.checked).length,cap:document.querySelector('#${id} .cap').textContent}})()`;
@@ -153,6 +161,17 @@ try {
         await cdp.evaluate(`document.querySelector('#waterTable tbody input[type=checkbox]').click()`);
         if (wBefore === wAfter) throw new Error('하천 체크 변경이 미리보기에 반영되지 않았습니다.');
       }
+    }
+    if (s.gis) {
+      const gisView = await cdp.evaluate(`({hidden:document.getElementById('gisTable').hidden, rows:[...document.querySelectorAll('#gisTable tbody tr')].map(r=>r.innerText.replace(/\\s+/g,' ')), extras:[...document.querySelectorAll('#birdTable tbody tr')].map(r=>r.cells[6]?.innerText||'').filter(Boolean)})`);
+      if (gisView.hidden || gisView.rows.length !== 4) throw new Error('GIS 표가 4행이어야 합니다: ' + JSON.stringify(gisView));
+      if (!gisView.extras.some(t => /25\/26 1건/.test(t))) throw new Error('권역 내 GIS 구분이 표에 나와야 합니다: ' + JSON.stringify(gisView.extras));
+      view.gisView = gisView;
+      const before = await cdp.evaluate(`document.getElementById('preview2').toDataURL('image/png').length`);
+      await cdp.evaluate(`document.querySelector('#gisTable tbody input[type=checkbox]').click()`);
+      const after = await cdp.evaluate(`document.getElementById('preview2').toDataURL('image/png').length`);
+      if (before === after) throw new Error('GIS 체크 해제가 지도에 반영되지 않았습니다.');
+      await cdp.evaluate(`document.querySelector('#gisTable tbody input[type=checkbox]').click()`);
     }
     let pptxBytes = 0;
     if (!view.statusClass.includes('error')) {

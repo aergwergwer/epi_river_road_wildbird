@@ -236,3 +236,55 @@ test('배경 타일: 타일 수가 한도를 넘지 않고 URL이 맞다', () =>
   assert.match(hybrid[0], /Satellite\/14\/5\/3\.jpeg$/);
   assert.match(hybrid[1], /Hybrid\/14\/5\/3\.png$/);
 });
+
+// ---- GIS 엑셀 ----
+import { readXlsx, parseGis, groupGis, gisInside, pointInGeometry } from '../src/gis.js';
+
+const gisFile = new URL('./fixtures/gis-sample.xlsx', import.meta.url);
+
+test('GIS 엑셀: 첫 시트를 읽고 좌표 없는 행은 건너뛴다', async () => {
+  const { points, skipped } = parseGis(await readXlsx(fs.readFileSync(gisFile)));
+  assert.equal(points.length, 6);
+  assert.equal(skipped, 1);
+  assert.deepEqual(points[0], { kind: '25/26', lat: 35.03, lon: 126.73, title: '시험천', date: '2025-12-01', note: '' });
+  assert.equal(points[3].date, '');
+  assert.throws(() => parseGis([['이름', '값']]), /구분.*위도.*경도/);
+  await assert.rejects(readXlsx(Buffer.from('not a zip file at all, just text')), /엑셀/);
+});
+
+test('GIS 묶기: 같은 제목이 1km 안이면 한 칸, 지도 범위 밖은 제외, 거리는 기준점부터', async () => {
+  const { points } = parseGis(await readXlsx(fs.readFileSync(gisFile)));
+  const box = makeView({ lat: 35.0161, lon: 126.7108, radiusM: 50000, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL }).bbox;
+  const groups = groupGis(points, 35.0161, 126.7108, box);
+  assert.equal(groups.length, 4, '멀리(서울 근처)는 범위 밖, 시험천 두 건은 한 칸');
+  const stream = groups.find(g => g.name === '시험천');
+  assert.deepEqual(stream.kinds, ['25/26', '26/27 H5']);
+  assert.equal(stream.count, 2);
+  assert.match(stream.label, /시험천 25\/26·26\/27 H5 \(2건\)/);
+  assert.equal(stream.dates, '2025-12-01 ~ 2026-11-20');
+  assert.ok(stream.distance > 1000 && stream.distance < 3000, String(stream.distance));
+  for (let i = 1; i < groups.length; i++) assert.ok(groups[i - 1].distance <= groups[i].distance);
+});
+
+test('GIS 권역 안: 조사구역 안에 든 지점만 구분별로 센다', async () => {
+  const { points } = parseGis(await readXlsx(fs.readFileSync(gisFile)));
+  const byName = n => boundaries.features.find(f => f.properties.name === n).geometry;
+  assert.deepEqual(gisInside(byName('영산강중류'), points), [{ kind: '25/26', count: 1 }, { kind: '26/27 H5', count: 1 }, { kind: '24/25', count: 1 }]);
+  assert.deepEqual(gisInside(byName('영산강상류'), points), [{ kind: '나주', count: 1 }]);
+  assert.deepEqual(gisInside(byName('무안-목포 해안'), points), [{ kind: '25/26', count: 1 }]);
+  assert.deepEqual(gisInside(byName('한강하류'), points), []);
+  assert.equal(pointInGeometry(byName('영산강중류'), 126.53, 34.9), true);
+  assert.equal(pointInGeometry(byName('영산강중류'), 127.5, 37.5), false);
+});
+
+test('GIS 칸: 주황 칸으로 올라가고 체크한 묶음만 올라간다', async () => {
+  const { points } = parseGis(await readXlsx(fs.readFileSync(gisFile)));
+  const view = makeView({ lat: 35.0161, lon: 126.7108, radiusM: 50000, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL });
+  const groups = groupGis(points, 35.0161, 126.7108, view.bbox);
+  const { items } = layoutBirdSlide(view, { sites: groups, pointName: '나주' });
+  const names = items.filter(i => i.name.startsWith('GIS 지점 이름'));
+  assert.equal(names.length, 4);
+  assert.ok(names.every(i => i.fill === 'FFF2CC'));
+  assert.ok(names.some(i => /시험천 25\/26·26\/27 H5 \(2건\)/.test(i.text)));
+  assert.equal(layoutBirdSlide(view, { sites: groups.slice(0, 1), pointName: '나주' }).items.filter(i => i.name.startsWith('GIS 지점 이름')).length, 1);
+});

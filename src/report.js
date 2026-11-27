@@ -73,6 +73,7 @@ export async function buildReport(PptxGenJS, { meta, water, bird }) {
   s2.addText(`국립생물자원관 철새지리정보 · ${bird.credit || '배경 없음'}`, { x: 7.1, y: 7.36, w: 6.1, h: 0.12, align: 'right', ...footer });
   s2.addNotes(noteText(`${where} · 철새도래지 반경 ${bird.radiusM / 1000} km · 조사월 ${bird.monthLabel}`, [
     ['철새도래지 — 지도 범위에 걸치는 조사구역 전체 (이름 · 경계까지 거리 · 개체수)', bird.allSites.map((s, i) => `${i + 1}. ${s.name} · ${fmtDistance(s.distance)} · ${fmtCount(s.count)}${s.count === null && s.reason ? ` (${s.reason})` : ''}`)],
+    ...(bird.allGis?.length ? [['GIS 엑셀 지점 — 지도 범위 (이름 · 구분 · 기준점까지 거리 · 날짜)', bird.allGis.map((g, i) => `${i + 1}. ${g.name} · ${g.kinds.join(', ')} · ${fmtDistance(g.distance)}${g.count > 1 ? ` · ${g.count}건` : ''}${g.dates ? ` · ${g.dates}` : ''}`)]] : []),
     ['출처', ['조사구역·경계·월별 개체수: 국립생물자원관 철새지리정보 동시센서스 (https://species.nibr.go.kr/bird/home/geo/index.do)', '거리는 조사구역 경계까지의 최단 직선거리이며 구역 안이면 0입니다. 조사지역명이 일치하지 않는 구역은 개체수를 자료 없음으로 표시합니다.',
       bird.countsError ? `개체수 조회에 실패해 모든 구역을 자료 없음으로 표시했습니다(${bird.countsError}). 합계는 의미가 없습니다.` : `합계 ${bird.total.toLocaleString('ko-KR')}개체 (자료가 있는 ${bird.measured}곳)`]],
   ]));

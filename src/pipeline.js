@@ -3,9 +3,10 @@ import { inKorea } from './geo.js';
 import { makeView } from './view.js';
 import { measureWaters, measureRoads } from './analysis.js';
 import { surveySites, applyCounts, monthText } from './birds.js';
+import { groupGis, gisInside } from './gis.js';
 import { drawBackground } from './basemap.js';
 import { MAP1, MAP2, RADIUS_FILL, SIGN, layoutWaterSlide, layoutBirdSlide, drawItems } from './layout.js';
-import { FONT, drawWaterRoadScene, drawBirdScene, drawRoadSigns } from './render.js';
+import { FONT, drawWaterRoadScene, drawBirdScene, drawGisDots, drawRoadSigns } from './render.js';
 
 export const SLIDE_ROWS = { roads: 6 }; // 도로 이름표는 지도에 최대 6개 노선(나머지는 표·노트)
 
@@ -17,7 +18,7 @@ export function parseCoordinate(latText, lonText) {
 }
 
 /** 위치 하나에 대한 하천·도로·철새도래지 조회. */
-export async function lookup({ lat, lon, waterRadiusM, birdRadiusM, month, store, birdApi, birdContext, onStatus = () => {} }) {
+export async function lookup({ lat, lon, waterRadiusM, birdRadiusM, month, store, birdApi, birdContext, gisPoints = [], onStatus = () => {} }) {
   const waterView = makeView({ lat, lon, radiusM: waterRadiusM, width: MAP1.width, height: MAP1.height, fill: RADIUS_FILL });
   onStatus('하천·호수·도로 데이터를 읽는 중…');
   const [rivers, lakes, roads] = await Promise.all(['rivers', 'lakes', 'roads'].map(layer => store.load(layer, waterView.bbox)));
@@ -27,13 +28,16 @@ export async function lookup({ lat, lon, waterRadiusM, birdRadiusM, month, store
   onStatus('철새 조사구역과 개체수를 조회하는 중…');
   const birdView = makeView({ lat, lon, radiusM: birdRadiusM, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL });
   const sites = surveySites(birdContext.boundaries, birdContext.meta.areas, lat, lon, birdView.bbox);
+  // GIS 엑셀: 지도 범위의 지점은 묶어서 칸으로, 철새 권역(조사구역) 안의 지점은 구분별로 센다.
+  const gis = groupGis(gisPoints, lat, lon, birdView.bbox);
+  for (const site of sites) site.gis = gisPoints.length ? gisInside(site.geometry, gisPoints) : [];
   const ids = sites.filter(s => s.nibrId).map(s => s.nibrId);
   let countsError = null;
   if (ids.length) {
     // 개체수 조회가 실패해도 경계·거리는 보여 준다. 호출자가 경고를 띄운다.
     try { applyCounts(sites, await birdApi.counts(ids, month)); } catch (error) { countsError = error.message; }
   }
-  return { lat, lon, waterRadiusM, birdRadiusM, month, rivers, lakes, roads, waters, routes, sites, countsError, boundaries: birdContext.boundaries.features };
+  return { lat, lon, waterRadiusM, birdRadiusM, month, rivers, lakes, roads, waters, routes, sites, gis, countsError, boundaries: birdContext.boundaries.features };
 }
 
 export function newCanvas(size, createCanvas = () => document.createElement('canvas')) {
@@ -103,22 +107,24 @@ export async function renderSlides(data, { pointName, backgrounds, deps = {}, on
     const boundary = deps.canvas3 || newCanvas(MAP2);
     const preview = deps.preview2 || newCanvas(MAP2);
     out.bird = {
-      radiusM: data.birdRadiusM, monthLabel: monthText(data.month), sites: data.sites, credit, preview,
+      radiusM: data.birdRadiusM, monthLabel: monthText(data.month), sites: data.sites, credit, preview, gis: data.gis, allGis: data.gis,
       baseImage: encode(base, backgrounds.bird.mode), countsError: data.countsError, allSites: data.sites,
     };
     // chosen: 지도에 올릴 조사구역 Set. 없으면 지도 범위의 전부.
-    out.bird.relayout = (chosen = null) => {
+    out.bird.relayout = (chosen = null, chosenGis = null) => {
       const picked = chosen ? data.sites.filter(site => chosen.has(site)) : data.sites;
+      const pickedGis = chosenGis ? data.gis.filter(group => chosenGis.has(group)) : data.gis;
       const bctx = boundary.getContext('2d');
       bctx.clearRect(0, 0, boundary.width, boundary.height);
       drawBirdScene(bctx, view, { boundaries: data.boundaries, highlight: new Set(picked.map(site => site.id)) });
-      const { items, scale } = layoutBirdSlide(view, { sites: picked, pointName });
+      drawGisDots(bctx, view, pickedGis);
+      const { items, scale } = layoutBirdSlide(view, { sites: [...picked, ...pickedGis], pointName });
       const pctx = preview.getContext('2d');
       pctx.drawImage(base, 0, 0);
       pctx.drawImage(boundary, 0, 0);
       drawItems(pctx, items, FONT);
       Object.assign(out.bird, {
-        items, labelScale: scale, boundaryImage: boundary.toDataURL('image/png'), labeled: new Set(picked),
+        items, labelScale: scale, boundaryImage: boundary.toDataURL('image/png'), labeled: new Set(picked), labeledGis: new Set(pickedGis),
         total: picked.reduce((sum, site) => sum + (site.count || 0), 0), measured: picked.filter(site => site.count !== null).length,
       });
       return out.bird;

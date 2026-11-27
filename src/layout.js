@@ -184,7 +184,7 @@ function visibleRiverNames(view, rivers) {
 }
 
 // ---- 슬라이드 2: 철새도래지 ----
-export const siteText = site => `${site.name} ${site.count === null ? '자료 없음' : site.count.toLocaleString('ko-KR') + '수'}`;
+export const siteText = site => site.label || `${site.name} ${site.count === null ? '자료 없음' : site.count.toLocaleString('ko-KR') + '수'}`;
 
 /**
  * 2장 배치: 도래지 이름·개체수(회색 칸, 파란 글씨)와 구역 경계까지의 거리(하늘색 칸).
@@ -255,8 +255,9 @@ export function layoutBirdSlide(view, { sites, pointName }) {
   const ptOf = (size, k) => Math.max(4, Math.round(size * k * 2) / 2);
   for (const { site, text, distance, box, distH, nameH, w, s: k } of result.placed) {
     const pt = size => ptOf(size, k);
-    items.push({ name: '도래지 이름·개체수 (편집 가능)', shape: 'rect', x: box.x, y: box.y + distH, w, h: nameH, fill: 'EDEDED', line: { color: '0000FF', pt: 1 }, text, color: '0000FF', pt: pt(22), bold: true, face: FACE });
-    items.push({ name: '구역 경계 최단거리 (편집 가능)', shape: 'rect', x: box.x + 0.05 * inch * k, y: box.y, w: Math.max(0.62, distance.length * 0.18) * inch * k, h: distH, fill: '00B0F0', text: distance, color: '000000', pt: pt(20), bold: true, face: FACE });
+    const gis = site.kind === 'gis'; // GIS 엑셀 지점은 주황 계열로 도래지 칸과 구분한다
+    items.push({ name: gis ? 'GIS 지점 이름·구분 (편집 가능)' : '도래지 이름·개체수 (편집 가능)', shape: 'rect', x: box.x, y: box.y + distH, w, h: nameH, fill: gis ? 'FFF2CC' : 'EDEDED', line: { color: gis ? 'C55A11' : '0000FF', pt: 1 }, text, color: gis ? '9C2F00' : '0000FF', pt: pt(22), bold: true, face: FACE });
+    items.push({ name: gis ? 'GIS 지점 거리 (편집 가능)' : '구역 경계 최단거리 (편집 가능)', shape: 'rect', x: box.x + 0.05 * inch * k, y: box.y, w: Math.max(0.62, distance.length * 0.18) * inch * k, h: distH, fill: gis ? 'F4B183' : '00B0F0', text: distance, color: '000000', pt: pt(20), bold: true, face: FACE });
   }
   return { items, scale, overflow: result.overflow };
 }

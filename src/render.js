@@ -120,6 +120,7 @@ export function drawBirdScene(ctx, view, { boundaries, highlight = new Set() }) 
   for (const feature of boundaries) {
     const polygons = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates;
     const listed = highlight.has(feature.id);
+    if (!listed) continue; // 체크를 해제한 조사구역은 보라색 구역도 그리지 않는다
     ctx.fillStyle = listed ? 'rgba(107,87,214,0.50)' : 'rgba(107,87,214,0.18)';
     ctx.strokeStyle = listed ? '#4b3bb3' : 'rgba(75,59,179,0.55)';
     ctx.lineWidth = listed ? 3 : 2;
@@ -134,4 +135,18 @@ export function drawBirdScene(ctx, view, { boundaries, highlight = new Set() }) 
 
 export function textWidth(text, fontPx) {
   return [...String(text)].reduce((sum, ch) => sum + (ch.charCodeAt(0) >= 0x1100 ? 1 : 0.58), 0) * fontPx;
+}
+
+/** GIS 엑셀 지점: 주황 점(흰 테두리). groups는 groupGis의 묶음 목록으로, 묶음 안의 모든 좌표에 점을 찍는다. */
+export function drawGisDots(ctx, view, groups) {
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#ffffff';
+  ctx.fillStyle = '#e8590c';
+  for (const group of groups) for (const p of group.points) {
+    const [x, y] = view.toPx(p.lon, p.lat);
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
 }
