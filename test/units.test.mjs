@@ -246,7 +246,7 @@ test('GIS 엑셀: 첫 시트를 읽고 좌표 없는 행은 건너뛴다', async
   const { points, skipped } = parseGis(await readXlsx(fs.readFileSync(gisFile)));
   assert.equal(points.length, 6);
   assert.equal(skipped, 1);
-  assert.deepEqual(points[0], { kind: '25/26', lat: 35.03, lon: 126.73, title: '시험천', date: '2025-12-01', note: '', color: '377EB8' });
+  assert.deepEqual(points[0], { kind: '25/26', lat: 35.03, lon: 126.73, title: '시험천', date: '2025-12-01', dateKey: 20423, note: '', color: '377EB8' });
   assert.deepEqual(points.map(p => p.color), ['377EB8', 'FF0000', 'A6CEE3', 'FFFF33', '', '377EB8'], '표현색 열의 배경색');
   assert.equal(points[3].date, '');
   assert.throws(() => parseGis([['이름', '값']]), /구분.*위도.*경도/);
@@ -497,4 +497,98 @@ test('R2-01: 선택 상태가 없을 때(최초)는 원본 정책(가까운 노�
   const out = layoutWaterSlide(view, { waters, routes, pointName: '', credit: '', maxRoads: 6 });
   assert.equal(out.shownRoutes.length, 6);
   assert.equal(out.drawKeys.routes.size, 6);
+});
+
+// ───────── 3차 적대적 리뷰 회귀(R3-01·02) ─────────
+import { parseDate } from '../src/gis.js';
+const BOX = [124, 32, 132, 40];
+const grouped = rows => groupGis(parseGis(Object.assign(rows, { fills: [] })).points, 36, 128, BOX);
+const H = ['구분', '위도', '경도', '제목', '날짜', '표현색'];
+
+test('R3-01: 한 자리 월·일 문자열 날짜도 시간순으로 기간과 최신 색을 정한다(행 순서를 뒤집어도 같다)', () => {
+  const a = ['예전', 36, 128, '같은농장', '2026-2-01', 'red'], b = ['최근', 36, 128, '같은농장', '2026-11-01', 'blue'];
+  for (const rows of [[H, a, b], [H, b, a]]) {
+    const [g] = grouped(rows);
+    assert.equal(g.dates, '2026-02-01 ~ 2026-11-01');
+    assert.equal(g.color, '0000FF');
+  }
+});
+
+test('R3-01: 2026-2-1과 2026-02-01은 같은 날짜, 숫자 일련번호와 문자열을 섞어도 같은 기준', () => {
+  assert.deepEqual(parseDate('2026-2-1'), parseDate('2026-02-01'));
+  assert.equal(parseDate('2026-2-1').text, '2026-02-01');
+  assert.equal(parseDate(46353).text, '2026-11-27');
+  assert.equal(parseDate(46353).sortKey, parseDate('2026-11-27').sortKey);
+  assert.equal(parseDate(44891, true).sortKey, parseDate('2026/11/27').sortKey);
+  for (const t of ['2026.11.27', '2026년 11월 27일', '20261127', '2026-11-27 10:30', '2026-11-27T23:59:59+09:00']) assert.equal(parseDate(t).text, '2026-11-27', t);
+  const [g] = grouped([H, ['숫자', 36, 128, 'x', 46353 - 200, 'red'], ['문자', 36, 128, 'x', '2026-6-1', 'blue']]);
+  assert.equal(g.color, '0000FF');
+});
+
+test('R3-01: 윤년·월말·존재하지 않는 날짜 — 보정하지 않고 유효하지 않음, 모호한 형식도 추정하지 않음', () => {
+  assert.equal(parseDate('2024-2-29').text, '2024-02-29');
+  assert.equal(parseDate('2026-2-29').valid, false);
+  assert.equal(parseDate('2026-04-31').valid, false);
+  assert.equal(parseDate('2026-12-31').text, '2026-12-31');
+  assert.equal(parseDate('2026-13-01').valid, false);
+  assert.equal(parseDate('2026-02-30').text, '');
+  assert.equal(parseDate('11/01/2026').valid, false);
+  assert.equal(parseDate('어제').valid, false);
+  assert.equal(parseDate('').empty, true);
+  assert.equal(parseDate(null).valid, true);
+});
+
+test('R3-01: 날짜 미확인(빈 값·잘못된 값)은 최신 상태를 덮어쓰지 않고, 잘못된 날짜는 건수로 알린다', () => {
+  const rows = [H, ['A', 36, 128, 'x', '2026-3-1', 'red'], ['B', 36, 128, 'x', '', 'blue'], ['C', 36, 128, 'x', '2026-02-30', 'green']];
+  const { points, badDates, skipped } = parseGis(Object.assign(rows, { fills: [] }));
+  assert.deepEqual(badDates, [4]); // 엑셀 4행
+  assert.equal(skipped, 0);        // 좌표 오류로 제외한 행과 구분
+  assert.equal(points.length, 3);  // 파일·행을 거부하지 않고 날짜만 미확인으로 둔다
+  const [g] = groupGis(points, 36, 128, BOX);
+  assert.equal(g.color, 'FF0000');
+  assert.equal(g.dates, '2026-03-01');
+  const [undated] = grouped([H, ['A', 36, 128, 'y', '', 'red'], ['B', 36, 128, 'y', '', 'blue']]);
+  assert.equal(undated.dates, ''); assert.equal(undated.color, '0000FF'); // 모두 미확인이면 마지막 행의 색
+});
+
+test('R3-01·02: 실제 xlsx(문자열·숫자 혼합) → readXlsx → parseGis → groupGis, 불량 날짜 행 번호', async () => {
+  const { rows, points, badDates } = await sheetOf('gis-date-strings.xlsx');
+  assert.deepEqual(badDates, [5, 6]);
+  assert.equal(points.length, 5);
+  const [g] = groupGis(points, 36, 128, BOX).filter(x => x.title === '같은농장');
+  assert.equal(g.dates, '2026-02-01 ~ 2026-11-01');
+  assert.equal(g.color, '0000FF');
+  assert.equal(rows.sheetName, 'S');
+});
+
+test('R3-02: t="d" 날짜 셀(날짜·날짜시각 ISO)이 실제 xlsx에서 보존되고 일련번호와 같은 결과를 낸다', async () => {
+  const sample = (await sheetOf('gis-sample.xlsx')).points[0];
+  for (const name of ['gis-celltype-d.xlsx', 'gis-celltype-d-dateonly.xlsx']) {
+    const r = await sheetOf(name);
+    assert.equal(r.points[0].date, '2026-11-27', name);
+    assert.equal(r.points.length, 6); assert.equal(r.skipped, 1); assert.deepEqual(r.badDates, []);
+    assert.deepEqual({ ...r.points[0], date: '', dateKey: 0 }, { ...sample, date: '', dateKey: 0 }); // 날짜 외 값은 그대로
+  }
+  assert.equal(parseDate(46353).text, (await sheetOf('gis-celltype-d.xlsx')).points[0].date);
+});
+
+test('R3-02: 1904 통합 문서의 t="d" ISO 날짜에는 1,462일 보정을 다시 적용하지 않는다', async () => {
+  const r = await sheetOf('gis-celltype-d-1904.xlsx');
+  assert.equal(r.rows.date1904, true);
+  assert.equal(r.points[0].date, '2026-11-27');
+});
+
+test('R3-02: 잘못된 t="d" 값은 조용히 사라지지 않고 날짜 미확인 행으로 안내된다', async () => {
+  const r = await sheetOf('gis-celltype-d-bad.xlsx');
+  assert.equal(r.points[0].date, '');
+  assert.deepEqual(r.badDates, [2]);
+  assert.equal(r.points.length, 6);
+});
+
+test('R3-01: 업로드 안내에 날짜 미확인 행 수가 표시된다', async () => {
+  const msgs = [];
+  const gi = createGisInput({ read: async () => ({ points: [{}], skipped: 1, badDates: [3, 7], sheet: 'S' }), onInvalidate() {}, onChange: c => msgs.push(c.message) });
+  await gi.load({ name: 'a.xlsx' });
+  assert.match(msgs.at(-1), /좌표가 없거나 범위 밖인 1행 제외/);
+  assert.match(msgs.at(-1), /날짜 미확인.*2건.*3·7행/);
 });

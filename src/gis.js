@@ -104,7 +104,7 @@ export async function readXlsx(buffer) {
       const v = /<v>([\s\S]*?)<\/v>/.exec(body)?.[1];
       let value = null;
       if (type === 'inlineStr') value = textOf(body);
-      else if (v !== undefined) value = type === 's' ? shared[Number(v)] ?? null : type === 'str' || type === 'e' ? unescapeXml(v) : type === 'b' ? v === '1' : Number(v);
+      else if (v !== undefined) value = type === 's' ? shared[Number(v)] ?? null : type === 'str' || type === 'e' || type === 'd' ? unescapeXml(v) : type === 'b' ? v === '1' : Number(v);
       const index = columnIndex(ref);
       cells[index] = value;
       colors[index] = xfFill[Number(/\bs="(\d+)"/.exec(attrs)?.[1] ?? 0)] || '';
@@ -154,6 +154,33 @@ export function serialToDate(serial, date1904 = false) {
 }
 
 /**
+ * 날짜 해석(모든 입력 경로 공통). value는 숫자 일련번호, 또는 문자열(공유·인라인 문자열, t="d" ISO 값).
+ * 지원 형식: 일련번호(통합 문서의 1900/1904 시스템 적용), YYYY-M-D · YYYY/M/D · YYYY.M.D · YYYY년 M월 D일 · YYYYMMDD,
+ * 뒤에 시각(T·공백 뒤)이 붙어도 날짜 부분만 쓴다(시간대 변환 없음 — 적힌 날짜 그대로, 실행 환경의 시간대와 무관).
+ * M/D/Y처럼 모호한 형식·존재하지 않는 날짜(2월 30일 등)는 추정하거나 보정하지 않고 유효하지 않음으로 돌려준다.
+ * 반환: { text: 'YYYY-MM-DD'(표준 표시값), sortKey: 1970-01-01 기준 일수(정렬값), valid } — 빈 값은 {text:'', sortKey:null, valid:true, empty:true}.
+ */
+export function parseDate(value, date1904 = false) {
+  const empty = { text: '', sortKey: null, valid: true, empty: true }, invalid = raw => ({ text: '', sortKey: null, valid: false, raw });
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return empty;
+  let y, m, d;
+  if (typeof value === 'number') {
+    const text = serialToDate(value, date1904);
+    if (!text) return invalid(String(value));
+    [y, m, d] = text.split('-').map(Number);
+  } else {
+    const t = String(value).trim();
+    const match = /^(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})\.?(?:[T\s].*)?$/.exec(t) || /^(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?(?:[T\s].*)?$/.exec(t) || /^(\d{4})(\d{2})(\d{2})(?:T.*)?$/.exec(t);
+    if (!match) return invalid(t);
+    [y, m, d] = match.slice(1, 4).map(Number);
+  }
+  const ms = Date.UTC(y, m - 1, d);
+  const check = new Date(ms);
+  if (!(y >= 1900 && y <= 2200) || check.getUTCFullYear() !== y || check.getUTCMonth() !== m - 1 || check.getUTCDate() !== d) return invalid(String(value));
+  return { text: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`, sortKey: Math.round(ms / 86400000), valid: true };
+}
+
+/**
  * 첫 행의 열 이름(구분·위도·경도, 선택: 제목·날짜·내용)으로 지점 목록을 만든다.
  * 좌표가 숫자가 아니거나 대한민국 범위를 벗어난 행은 건너뛰고 skipped로 센다.
  */
@@ -164,21 +191,23 @@ export function parseGis(rows) {
   if (iKind < 0 || iLat < 0 || iLon < 0) throw new Error('엑셀 첫 행에 "구분", "위도", "경도" 열이 있어야 합니다.');
   const points = [];
   let skipped = 0;
+  const badDates = []; // 날짜를 해석하지 못한 행(엑셀 행 번호). 좌표 오류로 제외한 skipped와 구분하며, 행은 날짜 미확인으로 남긴다.
   rows.slice(1).forEach((row, rowIndex) => {
     if (!row || row.every(v => v === null || String(v).trim() === '')) return;
     const lat = Number(row[iLat]), lon = Number(row[iLon]);
     if (row[iLat] === null || row[iLon] === null || !Number.isFinite(lat) || !Number.isFinite(lon) || lat < 32 || lat > 40 || lon < 124 || lon > 132) { skipped++; return; }
-    const date = iDate >= 0 ? row[iDate] : null;
+    const parsed = parseDate(iDate >= 0 ? row[iDate] : null, rows.date1904);
+    if (!parsed.valid) badDates.push(rowIndex + 2);
     points.push({
       kind: String(row[iKind] ?? '').trim() || '구분 없음', lat, lon,
       title: iTitle >= 0 ? String(row[iTitle] ?? '').trim() : '',
-      date: typeof date === 'number' ? serialToDate(date, rows.date1904) : date ? String(date).trim() : '',
+      date: parsed.text, dateKey: parsed.sortKey, // 표시용 문자열과 정렬값을 분리(날짜 미확인이면 '' · null)
       note: iNote >= 0 ? String(row[iNote] ?? '').trim() : '',
       // 표현색: 셀에 적힌 색 값이 있으면 그것, 없으면 그 칸의 배경색(엑셀에서 색칠한 것)
       color: iColor >= 0 ? parseColor(row[iColor]) || rows.fills?.[rowIndex + 1]?.[iColor] || '' : '',
     });
   });
-  return { points, skipped };
+  return { points, skipped, badDates };
 }
 
 /** 두 지점 사이 직선거리(m). */
@@ -192,6 +221,14 @@ export function haversine(lat1, lon1, lat2, lon2) {
  * 지도 범위(box) 안의 지점을 같은 제목끼리 1km 안에서 하나로 묶는다(같은 농장·하천의 반복 발생을 칸 하나로).
  * 묶음마다 구분 목록(등장 순)과 건수, 날짜 범위를 갖고, distance는 기준점(lat, lon)까지의 거리다.
  */
+/** 색이 지정된 기록 중 가장 최근(날짜 정렬값) 것의 색. 날짜 미확인 기록은 어떤 날짜 기록보다 오래된 것으로 보고, 같은 날짜면 뒤에 나온 행이 이긴다. 모두 날짜 미확인이면 마지막 행. */
+function latestColor(points) {
+  const key = p => (p.dateKey === null || p.dateKey === undefined ? -Infinity : p.dateKey);
+  let best = null;
+  for (const p of points) if (p.color && (!best || key(p) >= key(best))) best = p;
+  return best?.color || '';
+}
+
 export function groupGis(points, lat, lon, box) {
   const groups = [];
   for (const p of points) {
@@ -201,10 +238,11 @@ export function groupGis(points, lat, lon, box) {
   }
   return groups.map(g => {
     const kinds = [...new Set(g.points.map(p => p.kind))];
-    const dates = g.points.map(p => p.date).filter(Boolean).sort();
+    const dated = g.points.filter(p => p.dateKey !== null && p.dateKey !== undefined).sort((a, b) => a.dateKey - b.dateKey);
+    const dates = dated.map(p => p.date);
     const name = g.title || '이름 없음';
     return {
-      kind: 'gis', color: [...g.points].filter(p => p.color).sort((a, b) => a.date.localeCompare(b.date)).at(-1)?.color || '', // 묶음 칸은 가장 최근 건의 색
+      kind: 'gis', color: latestColor(g.points), // 묶음 칸은 색이 지정된 기록 중 가장 최근 건의 색
       name, title: g.title, lat: g.lat, lon: g.lon, point: [g.lon, g.lat], points: g.points, kinds, count: g.points.length,
       distance: haversine(lat, lon, g.lat, g.lon),
       label: `${name} ${kinds.join('·')}${g.points.length > 1 ? ` (${g.points.length}건)` : ''}`,

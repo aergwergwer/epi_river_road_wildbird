@@ -1,6 +1,6 @@
 // GIS 엑셀 입력 상태. 업로드·교체·삭제마다 작업 번호를 올려, 오래된 읽기 결과가 현재 상태를 덮어쓰지 못하게 한다.
 //
-// read(file): Promise<{points, skipped, sheet}>  — 파일을 읽어 지점 목록을 돌려준다.
+// read(file): Promise<{points, skipped, badDates, sheet}>  — 파일을 읽어 지점 목록을 돌려준다.
 // onInvalidate(): 입력이 바뀔 때마다 즉시 호출(이전 조회 결과·저장 버튼을 무효화).
 // onChange({ message, tone, hasFile, reading, failed }): 안내 문구·버튼 상태를 갱신한다.
 export function createGisInput({ read, onInvalidate, onChange }) {
@@ -26,7 +26,7 @@ export function createGisInput({ read, onInvalidate, onChange }) {
         points = result.points;
         name = file.name;
         reading = false;
-        publish(`${file.name}${result.sheet ? ` (시트 "${result.sheet}")` : ''} · 지점 ${points.length}개를 읽었습니다${result.skipped ? ` (좌표가 없거나 범위 밖인 ${result.skipped}행 제외)` : ''}. 조회하면 철새도래지 슬라이드에 올라갑니다.`);
+        publish(`${file.name}${result.sheet ? ` (시트 "${result.sheet}")` : ''} · 지점 ${points.length}개를 읽었습니다${result.skipped ? ` (좌표가 없거나 범위 밖인 ${result.skipped}행 제외)` : ''}${result.badDates?.length ? ` · 날짜를 읽지 못해 "날짜 미확인"으로 둔 행 ${result.badDates.length}건(엑셀 ${result.badDates.slice(0, 5).join('·')}행${result.badDates.length > 5 ? ' 등' : ''})` : ''}. 조회하면 철새도래지 슬라이드에 올라갑니다.`);
         return true;
       } catch (error) {
         if (mine !== job) return false;
