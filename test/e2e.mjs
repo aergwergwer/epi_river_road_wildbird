@@ -220,7 +220,7 @@ try {
       // REV-02/03: 시트 순서가 바뀐 엑셀 + 빠른 교체(A 직후 B) → 최종은 B, 시트 이름 표시
       await upload('gis-sample.xlsx', fs.readFileSync(new URL('./fixtures/gis-sample.xlsx', import.meta.url)));
       await upload('gis-reordered.xlsx', fs.readFileSync(new URL('./fixtures/gis-reordered.xlsx', import.meta.url)));
-      await until(cdp, `document.getElementById('gisStatus').textContent.includes('gis-reordered.xlsx')`, '빠른 교체 완료');
+      await until(cdp, `document.getElementById('gisStatus').textContent.includes('gis-reordered.xlsx') && document.getElementById('gisStatus').textContent.includes('개를 읽었습니다')`, '빠른 교체 완료');
       const replaced = await gisState();
       if (!/SECOND_SHEET/.test(replaced.status) || /gis-sample/.test(replaced.status) || !/지점 1개/.test(replaced.status)) throw new Error('빠른 교체 후 최신 파일(시트 SECOND_SHEET)이어야 합니다: ' + JSON.stringify(replaced));
       view.fastReplace = replaced;
