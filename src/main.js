@@ -5,6 +5,7 @@ import { searchAddress, cleanKey } from './geocode.js';
 import { BACKGROUNDS, loadEarthEngineLibrary, loadSentinel } from './basemap.js';
 import { lookup, renderSlides, parseCoordinate } from './pipeline.js';
 import { buildReport, fmtDistance, fmtCount, boundaryLabel } from './report.js';
+import { roadLabel as roadName } from './layout.js';
 import { readXlsx, parseGis } from './gis.js';
 import { createGisInput } from './gisInput.js';
 
@@ -228,7 +229,12 @@ function birdCaption() {
 function buildTables() {
   const { rendered } = last, w = rendered.water, b = rendered.bird;
   const selected = { waters: new Set(w.labeled), routes: new Set(w.signed) };
-  const redrawWater = () => { w.relayout(selected); showPreviews(); };
+  const redrawWater = () => { w.relayout(selected); showPreviews(); waterNotice(); };
+  const waterNotice = () => {
+    const names = [...w.unplacedWaters.map(r => r.name), ...w.unplacedRoutes.map(r => roadName(r))];
+    $('waterNote').hidden = !names.length;
+    $('waterNote').textContent = names.length ? `지도에 이름표·번호 표지를 놓을 자리가 없는 항목 ${names.length}건(선·면은 지도에 표시됩니다): ${names.join(', ')}` : '';
+  };
   fillTable($('waterTable'), w.rivers.map(r => ({
     item: r, name: r.name, kind: r.grade, distance: r.inside ? '구역 안' : fmtDistance(r.distance),
     note: r.grade === '호수·저수지' && r.area ? `면적 ${Math.round(r.area).toLocaleString('ko-KR')}㎡` : '',
@@ -246,6 +252,7 @@ function buildTables() {
     item: g, name: g.name, kind: g.kinds.join(', '), distance: fmtDistance(g.distance),
     note: [g.count > 1 ? `${g.count}건` : '', g.dates].filter(Boolean).join(' · '),
   })), selectedGis, on => { selectedGis = on; redrawBird(); });
+  waterNotice();
   birdCaption();
   const boundary = boundaryLabel(b.boundaryInfo);
   $('boundaryNote').hidden = false;

@@ -133,7 +133,16 @@ export function layoutWaterSlide(view, { waters, routes, pointName, credit, maxR
     items.push({ name: `${row.name} 하천명`, shape: 'roundRect', x: pos.x, y: pos.y + distH, w, h: nameH, fill: '00E6EE', line: { color: '12212A', pt: 1.4 }, text: row.name, color: '000000', pt: 15, bold: true });
   }
 
-  return { signs, items, bubbled, signed: placedSigns.map(p => p.route) };
+  // 지도에 그릴 도형은 '선택(표시) 집합'이 정한다. 말풍선·번호 표지를 놓았는지(bubbled·signed)와는 별개이며,
+  // 표지를 못 놓은 항목은 unplaced로 돌려줘 도형은 그대로 그리고 화면에서 안내한다.
+  const signed = placedSigns.map(p => p.route);
+  const shownWaters = chosenWaters ? pool : bubbled; // 체크 상태가 없을 때(최초)는 원본 기준으로 고른 것이 곧 기본 선택
+  const unplacedWaters = shownWaters.filter(r => !bubbled.includes(r));
+  const unplacedRoutes = shownRoutes.filter(r => !signed.includes(r));
+  return {
+    signs, items, bubbled, signed, shownWaters, shownRoutes, unplacedWaters, unplacedRoutes,
+    drawKeys: { waters: new Set(shownWaters.map(r => r.key)), routes: new Set(shownRoutes.map(r => r.key)) },
+  };
 }
 
 // ---- 슬라이드 2: 철새도래지 ----

@@ -87,7 +87,7 @@ export async function renderSlides(data, { pointName, backgrounds, deps = {}, on
     out.water = { radiusM: data.waterRadiusM, rivers: data.waters, roads: data.routes, credit: bgCredit, preview, allWaters: data.waters, allRoutes: data.routes };
     // chosen이 없으면 원본 기준으로 고르고, 있으면 {waters, routes}(Set)에 든 항목만 지도에 올린다.
     out.water.relayout = (chosen = {}) => {
-      const { items, bubbled, signed } = layoutWaterSlide(view, {
+      const { items, bubbled, signed, shownWaters, shownRoutes, unplacedWaters, unplacedRoutes, drawKeys } = layoutWaterSlide(view, {
         waters: data.waters, routes: data.routes, pointName, credit, maxRoads: SLIDE_ROWS.roads,
         chosenWaters: chosen.waters || null, chosenRoutes: chosen.routes || null,
       });
@@ -95,11 +95,11 @@ export async function renderSlides(data, { pointName, backgrounds, deps = {}, on
       const fctx = final.getContext('2d');
       fctx.clearRect(0, 0, final.width, final.height);
       fctx.drawImage(scene, 0, 0);
-      drawWaterRoadScene(fctx, view, data, { waters: new Set(bubbled.map(r => r.key)), routes: new Set(signed.map(r => r.key)) });
+      drawWaterRoadScene(fctx, view, data, drawKeys);
       const pctx = preview.getContext('2d');
       pctx.drawImage(final, 0, 0);
       drawItems(pctx, items, FONT);
-      Object.assign(out.water, { image: encode(final, backgrounds.water.mode), items, labeled: new Set(bubbled), signed: new Set(signed) });
+      Object.assign(out.water, { image: encode(final, backgrounds.water.mode), items, labeled: new Set(shownWaters), signed: new Set(shownRoutes), unplacedWaters, unplacedRoutes });
       return out.water;
     };
     out.water.relayout();

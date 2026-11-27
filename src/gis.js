@@ -114,6 +114,7 @@ export async function readXlsx(buffer) {
   }
   rows.fills = fills;
   rows.sheetName = sheetTitle;
+  rows.date1904 = isDate1904(files['xl/workbook.xml']);
   return rows;
 }
 
@@ -137,7 +138,20 @@ export function parseColor(value) {
   return NAMED[text.toLowerCase().replace(/\s+/g, '')] || '';
 }
 
-const serialToDate = serial => new Date(Math.round((serial - 25569) * 86400000)).toISOString().slice(0, 10);
+/** workbook.xml의 <workbookPr date1904>: true·1이면 1904 날짜 시스템. 속성이 없거나 false·0이면 1900 시스템. */
+export function isDate1904(workbookXml) {
+  const xml = workbookXml ? decoder.decode(workbookXml) : '';
+  const tag = /<workbookPr\b[^>]*>/.exec(xml)?.[0] || '';
+  const value = /\bdate1904\s*=\s*["']([^"']*)["']/.exec(tag)?.[1];
+  return value !== undefined && /^(true|1)$/i.test(value.trim());
+}
+
+/** 엑셀 날짜 일련번호 → YYYY-MM-DD(소수 부분은 시각이므로 버림). 1904 시스템은 1900 기준보다 1,462일 작다. 유효하지 않은 값은 ''(날짜 미확인). */
+export function serialToDate(serial, date1904 = false) {
+  if (!Number.isFinite(serial) || serial < 0 || serial > 2958465) return '';
+  const day = Math.floor(serial) + (date1904 ? 1462 : 0);
+  return new Date(Math.round((day - 25569) * 86400000)).toISOString().slice(0, 10);
+}
 
 /**
  * 첫 행의 열 이름(구분·위도·경도, 선택: 제목·날짜·내용)으로 지점 목록을 만든다.
@@ -158,7 +172,7 @@ export function parseGis(rows) {
     points.push({
       kind: String(row[iKind] ?? '').trim() || '구분 없음', lat, lon,
       title: iTitle >= 0 ? String(row[iTitle] ?? '').trim() : '',
-      date: typeof date === 'number' ? serialToDate(date) : date ? String(date).trim() : '',
+      date: typeof date === 'number' ? serialToDate(date, rows.date1904) : date ? String(date).trim() : '',
       note: iNote >= 0 ? String(row[iNote] ?? '').trim() : '',
       // 표현색: 셀에 적힌 색 값이 있으면 그것, 없으면 그 칸의 배경색(엑셀에서 색칠한 것)
       color: iColor >= 0 ? parseColor(row[iColor]) || rows.fills?.[rowIndex + 1]?.[iColor] || '' : '',

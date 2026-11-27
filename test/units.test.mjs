@@ -332,7 +332,7 @@ import { boundaryInfo } from '../src/pipeline.js';
 import { boundaryLabel } from '../src/report.js';
 
 const fixture = name => fs.readFileSync(new URL('./fixtures/' + name, import.meta.url));
-const sheetOf = async name => { const rows = await readXlsx(fixture(name).buffer.slice(fixture(name).byteOffset, fixture(name).byteOffset + fixture(name).byteLength)); return { rows, ...parseGis(rows) }; };
+const sheetOf = async name => { const bytes = fixture(name); const rows = await readXlsx(bytes); return { rows, ...parseGis(rows) }; };
 
 test('REV-02: 시트 순서가 바뀐 엑셀은 보이는 첫 시트를 읽는다(파일 번호가 아니라 workbook 순서)', async () => {
   const normal = await sheetOf('gis-two-sheets.xlsx');
@@ -428,4 +428,73 @@ test('REV-05: 경계 출처 정보 — 저장본/실시간/메타 없음을 구�
   assert.match(boundaryLabel({ snapshot: true, retrievedAt: '' }).short, /수집일 미확인/);
   assert.match(boundaryLabel({ snapshot: false, retrievedAt: '2026-11-27T00:00:00Z' }).short, /실시간/);
   assert.match(boundaryLabel(undefined).short, /미확인/);
+});
+
+// ───────── 2차 적대적 리뷰 회귀(R2-01·02·03) ─────────
+import { serialToDate, isDate1904 } from '../src/gis.js';
+
+test('R2-02: 같은 2026-11-27을 1900·1904 시스템으로 저장한 실제 xlsx가 같은 날짜로 읽힌다(참·거짓 표현 포함)', async () => {
+  const dates = async name => (await sheetOf(name)).points.map(p => p.date);
+  const expected = ['2026-11-27', '2026-11-27', '2026-11-27'];
+  assert.deepEqual(await dates('gis-date1900.xlsx'), expected);   // 문자열 날짜는 보정 없이 그대로, 숫자는 시각 포함해도 날짜 부분만
+  assert.deepEqual(await dates('gis-date1904.xlsx'), expected);   // date1904="1" (openpyxl 저장)
+  assert.deepEqual(await dates('gis-date1904-one.xlsx'), expected); // date1904="1"
+  assert.deepEqual(await dates('gis-date1900-false.xlsx'), expected); // date1904="false"
+  assert.equal((await sheetOf('gis-date1904.xlsx')).rows.date1904, true);
+  assert.equal((await sheetOf('gis-sample.xlsx')).rows.date1904, false); // 속성 없는 기존 샘플은 1900
+});
+
+test('R2-02: 날짜 변환 — 1904 일련번호 44891은 2026-11-27, 1900은 46353, 잘못된 값은 날짜 미확인(빈 문자열)', () => {
+  assert.equal(serialToDate(44891, true), '2026-11-27');
+  assert.equal(serialToDate(46353), '2026-11-27');
+  assert.equal(serialToDate(46353.99), '2026-11-27');
+  assert.equal(serialToDate(NaN), ''); assert.equal(serialToDate(-5), ''); assert.equal(serialToDate(1e9), '');
+  assert.equal(isDate1904(new TextEncoder().encode('<workbook><workbookPr date1904="TRUE"/></workbook>')), true);
+  assert.equal(isDate1904(new TextEncoder().encode('<workbook><workbookPr/></workbook>')), false);
+  assert.equal(isDate1904(undefined), false);
+});
+
+test('R2-03: 시트 순서 테스트가 파일마다 한 번만 읽은 Buffer를 쓰고 반복 실행해도 같다', async () => {
+  for (let i = 0; i < 3; i++) for (const name of ['gis-two-sheets.xlsx', 'gis-reordered.xlsx', 'gis-first-hidden.xlsx']) assert.ok((await sheetOf(name)).rows.sheetName);
+});
+
+// 도로 12개의 가장 가까운 점이 한 곳에 몰려 번호 표지를 다 못 놓는 합성 입력(실제 지역 재현이 아님)
+function crowded(n) {
+  const view = makeView({ lat: 37, lon: 127, radiusM: 5000, width: MAP1.width, height: MAP1.height, fill: RADIUS_FILL });
+  const routes = Array.from({ length: n }, (_, i) => ({ key: `국도:${i + 1}`, kind: '국도', number: String(i + 1), name: `국도 ${i + 1}번`, distance: 100 + i, point: [127.0001, 37.0001] }));
+  const waters = Array.from({ length: n }, (_, i) => ({ key: `r:${i}`, kind: 'river', grade: '국가하천', name: `하천${i}`, distance: 200 + i, point: [127.0002, 37.0002], area: 0 }));
+  return { view, routes, waters };
+}
+
+test('R2-01: 번호 표지·말풍선을 다 못 놓아도 선택한 도형은 모두 그리고, 못 놓은 항목은 unplaced로 알린다', () => {
+  const { view, routes, waters } = crowded(12);
+  const out = layoutWaterSlide(view, { waters, routes, pointName: '', credit: '', chosenWaters: new Set(waters), chosenRoutes: new Set(routes) });
+  assert.ok(out.signed.length < 12, '합성 입력이 혼잡해야 의미가 있다: ' + out.signed.length);
+  assert.equal(out.drawKeys.routes.size, 12);
+  assert.equal(out.drawKeys.waters.size, 12);
+  assert.equal(out.unplacedRoutes.length, 12 - out.signed.length);
+  assert.equal(out.unplacedWaters.length, 12 - out.bubbled.length);
+  assert.ok(out.unplacedRoutes.every(r => !out.signed.includes(r)));
+});
+
+test('R2-01: 해제한 항목은 그리기 대상에서 빠지고, 전체 해제 → 일부 → 전체를 반복해도 선택 집합과 일치한다', () => {
+  const { view, routes, waters } = crowded(12);
+  const run = (w, r) => layoutWaterSlide(view, { waters, routes, pointName: '', credit: '', chosenWaters: new Set(w), chosenRoutes: new Set(r) });
+  for (let round = 0; round < 2; round++) {
+    const none = run([], []);
+    assert.equal(none.drawKeys.routes.size + none.drawKeys.waters.size, 0);
+    assert.equal(none.items.filter(i => /번호 표지|이름|거리|하천명/.test(i.name)).length, 0);
+    const some = run(waters.slice(0, 3), routes.slice(0, 5));
+    assert.deepEqual([...some.drawKeys.routes], routes.slice(0, 5).map(r => r.key));
+    assert.deepEqual([...some.drawKeys.waters], waters.slice(0, 3).map(r => r.key));
+    const all = run(waters, routes);
+    assert.equal(all.drawKeys.routes.size, 12);
+  }
+});
+
+test('R2-01: 선택 상태가 없을 때(최초)는 원본 정책(가까운 노선 maxRoads개)이 기본 선택이 된다', () => {
+  const { view, routes, waters } = crowded(12);
+  const out = layoutWaterSlide(view, { waters, routes, pointName: '', credit: '', maxRoads: 6 });
+  assert.equal(out.shownRoutes.length, 6);
+  assert.equal(out.drawKeys.routes.size, 6);
 });
