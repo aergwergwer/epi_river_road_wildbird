@@ -173,6 +173,18 @@ try {
       if (before === after) throw new Error('GIS 체크 해제가 지도에 반영되지 않았습니다.');
       await cdp.evaluate(`document.querySelector('#gisTable tbody input[type=checkbox]').click()`);
     }
+    if (!s.expectError && !view.statusClass.includes('error') && view.waterChecks.n && view.roadChecks.n) {
+      // 해제한 항목의 도형(하얀 도로 선, 하천·호수 면)이 지도에서 실제로 사라지는지 픽셀로 확인한다.
+      const count = `(()=>{const c=document.getElementById('preview1'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let white=0,blue=0;for(let i=0;i<d.length;i+=4){if(d[i]>250&&d[i+1]>250&&d[i+2]>250)white++;else if(Math.abs(d[i]-18)<22&&Math.abs(d[i+1]-61)<22&&Math.abs(d[i+2]-137)<30)blue++;}return {white,blue}})()`;
+      const before = await cdp.evaluate(count);
+      await cdp.evaluate(`['waterTable','roadTable'].forEach(id=>{const a=document.querySelector('#'+id+' thead input.all');if(a.checked||a.indeterminate){a.checked=false;a.dispatchEvent(new Event('change'))}})`);
+      const none = await cdp.evaluate(count);
+      if (!(none.white < before.white * 0.6) || none.blue > before.blue * 0.2) throw new Error('전체 해제 후에도 도형이 남아 있습니다: ' + JSON.stringify({ before, none }));
+      await cdp.evaluate(`['waterTable','roadTable'].forEach(id=>{const a=document.querySelector('#'+id+' thead input.all');a.checked=true;a.dispatchEvent(new Event('change'))})`);
+      const all = await cdp.evaluate(count);
+      if (all.white <= none.white) throw new Error('전체 체크 후 도형이 돌아오지 않았습니다: ' + JSON.stringify({ none, all }));
+      view.shapePixels = { before, none, all };
+    }
     if (s.gis) { // 화면 디자인 확인용 전체 화면 캡처
       const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
       fs.writeFileSync(path.join(outDir, s.name + '-page.png'), Buffer.from(shot.data, 'base64'));

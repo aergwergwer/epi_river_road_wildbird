@@ -60,7 +60,22 @@ function drawAreas(ctx, view, features, fill, stroke) {
  * 슬라이드 1 지도: 하천·호수 면과 국도·지방도 선. 국도는 굵게, 지방도는 가늘게 그려 구분하고
  * 위성·일반 어느 배경에서도 보이도록 흰 선 아래에 옅은 테두리를 깐다.
  */
-export function drawWaterRoadScene(ctx, view, { rivers, lakes, roads }) {
+/**
+ * 지도에 덧그릴 도형만 고른다. show = { waters: Set<'r:하천코드' | 'l:호수id'>, routes: Set<'국도:13'> }(표의 행 key).
+ * show가 없으면 전부. 표에 없는 도형(조회 반경 밖)은 고를 수 없으므로 show가 있을 때는 그리지 않는다.
+ * 도로는 노선 번호를 여럿 겹쳐 갖는 선분이 있어, 선택한 노선이 하나라도 있으면 그 선분을 그린다.
+ */
+export function selectShapes({ rivers, lakes, roads }, show = null) {
+  if (!show) return { rivers, lakes, roads };
+  return {
+    rivers: rivers.filter(r => show.waters.has('r:' + r.code)),
+    lakes: lakes.filter(l => show.waters.has('l:' + l.id)),
+    roads: roads.filter(road => road.numbers.some(n => show.routes.has(road.kind + ':' + n))),
+  };
+}
+
+export function drawWaterRoadScene(ctx, view, data, show = null) {
+  const { rivers, lakes, roads } = selectShapes(data, show);
   // 타일 이음매에서 같은 하천이 겹쳐 들어오므로, 불투명으로 따로 그린 뒤 한 번에 합성한다(겹침이 진하게 보이지 않도록).
   const layer = ctx.canvas.ownerDocument.createElement('canvas');
   layer.width = ctx.canvas.width;

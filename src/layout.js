@@ -38,7 +38,7 @@ export const SIGN = {
  * 10만㎡ 이상 호수·저수지는 항상 붙인다.
  */
 // chosenWaters / chosenRoutes: 사용자가 체크한 항목(Set). 없으면 원본 기준(거리 구간별 2곳 등)으로 고른다.
-export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName, credit, maxRoads = 6, chosenWaters = null, chosenRoutes = null }) {
+export function layoutWaterSlide(view, { waters, routes, pointName, credit, maxRoads = 6, chosenWaters = null, chosenRoutes = null }) {
   const W = view.width, H = view.height;
   const items = [], taken = [], signs = [];
   const [cx, cy] = view.toPx(view.lon, view.lat);
@@ -133,60 +133,7 @@ export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName,
     items.push({ name: `${row.name} 하천명`, shape: 'roundRect', x: pos.x, y: pos.y + distH, w, h: nameH, fill: '00E6EE', line: { color: '12212A', pt: 1.4 }, text: row.name, color: '000000', pt: 15, bold: true });
   }
 
-  // 거리 말풍선이 없는 하천은 이름만 반투명 흰 글상자로 하천 위에 붙인다(원본 방식: 화면에 보이는 모든 이름 있는 하천).
-  const tagBoxes = [];
-  const overlapsAny = box => taken.some(t => overlaps(box, t, 3)) || tagBoxes.some(t => overlaps(box, t, 3));
-  for (const river of visibleRiverNames(view, rivers).sort((a, b) => [...b.name].length - [...a.name].length)) {
-    if (withBubble.has(river.name)) continue;
-    const w = Math.max(57, [...river.name].length * 22.5 + 18), h = 30;
-    const at = dy => ({ x: Math.max(6, Math.min(W - w - 6, river.x - w / 2)), y: Math.max(6, Math.min(H - h - 6, river.y - h / 2 + dy)), w, h });
-    const offsets = [0, -24, 24, -48, 48, -72, 72, -96, 96].map(v => v * 1.5);
-    let box = offsets.map(at).find(b => !overlapsAny(b));
-    if (!box) {
-      let nearest = Infinity;
-      for (let top = 6; top + h <= H - 6; top += 18) for (let left = 6; left + w <= W - 6; left += 27) {
-        const candidate = { x: left, y: top, w, h }, d = (left - river.x) ** 2 + (top - river.y) ** 2;
-        if (d < nearest && !overlapsAny(candidate)) { nearest = d; box = candidate; }
-      }
-    }
-    if (!box) continue;
-    tagBoxes.push(box);
-    items.push({ name: `${river.name} 이름`, shape: 'rect', ...box, fill: 'FFFFFF', opacity: 0.875, text: river.name, color: '142B3E', pt: 10.5, bold: true });
-  }
   return { signs, items, bubbled, signed: placedSigns.map(p => p.route) };
-}
-
-/**
- * 화면에 보이는 이름 있는 하천마다 가장 길게 보이는 선분의 가운데를 돌려준다(하천 코드 기준, 타일 클리핑 변은 제외).
- */
-function visibleRiverNames(view, rivers) {
-  const W = view.width, H = view.height, names = new Map();
-  for (const river of rivers) {
-    if (!river.name || river.kind === 'lake' || !river.polys) continue;
-    if (river.bbox && (river.bbox[2] < view.bbox[0] || river.bbox[0] > view.bbox[2] || river.bbox[3] < view.bbox[1] || river.bbox[1] > view.bbox[3])) continue;
-    const key = river.code || river.name;
-    for (const polygon of river.polys) for (const ring of polygon) {
-      let px = null;
-      for (let i = 0, edge = 0; i + 3 < ring.xy.length; i += 2, edge++) {
-        const a = px || view.toPx(ring.xy[i], ring.xy[i + 1]), b = view.toPx(ring.xy[i + 2], ring.xy[i + 3]);
-        px = b;
-        if (ring.art && ring.art[edge]) continue;
-        const dx = b[0] - a[0], dy = b[1] - a[1];
-        let start = 0, end = 1;
-        for (const [p, q] of [[-dx, a[0]], [dx, W - a[0]], [-dy, a[1]], [dy, H - a[1]]]) {
-          if (p < 0) start = Math.max(start, q / p);
-          else if (p > 0) end = Math.min(end, q / p);
-          else if (q < 0) end = -1;
-        }
-        const length = (end - start) * Math.hypot(dx, dy);
-        if (length > (names.get(key)?.length || 0)) {
-          const t = (start + end) / 2;
-          names.set(key, { name: river.name, x: a[0] + t * dx, y: a[1] + t * dy, length });
-        }
-      }
-    }
-  }
-  return [...names.values()];
 }
 
 // ---- 슬라이드 2: 철새도래지 ----

@@ -68,13 +68,12 @@ export async function renderSlides(data, { pointName, backgrounds, deps = {}, on
   const progress = label => (done, total) => onStatus(`${label} 배경지도 타일 ${done}/${total}개`);
 
   // 슬라이드 1: 하천·도로 (슬라이드 전체가 지도)
-  // scene = 배경 + 하천·도로. 표지(국도·지방도 번호판)와 말풍선은 체크한 항목에 따라 다시 얹으므로 scene은 따로 둔다.
+  // scene = 배경지도. 하천·도로 도형, 번호 표지, 말풍선은 체크한 항목에 따라 매번 다시 얹는다.
   {
     const view = makeView({ lat: data.lat, lon: data.lon, radiusM: data.waterRadiusM, width: MAP1.width, height: MAP1.height, fill: RADIUS_FILL });
-    const scene = deps.canvas1 || newCanvas(MAP1), ctx = scene.getContext('2d');
+    const scene = deps.canvas1 || newCanvas(MAP1), ctx = scene.getContext('2d'); // 배경지도만(하천·도로 도형은 체크 상태에 맞춰 매번 새로 얹는다)
     onStatus('하천·도로 배경지도를 그리는 중…');
     const bgCredit = await drawBackground(ctx, view, await withSentinel(backgrounds.water, view, deps), { ...deps, onProgress: progress('하천·도로') });
-    drawWaterRoadScene(ctx, view, data);
     const credit = ['하천: 기후에너지환경부', '도로: 국토지리정보원', bgCredit].filter(Boolean).join(' · ');
     const final = deps.canvas1b || newCanvas(MAP1);
     const preview = deps.preview1 || newCanvas(MAP1);
@@ -82,12 +81,14 @@ export async function renderSlides(data, { pointName, backgrounds, deps = {}, on
     // chosen이 없으면 원본 기준으로 고르고, 있으면 {waters, routes}(Set)에 든 항목만 지도에 올린다.
     out.water.relayout = (chosen = {}) => {
       const { items, bubbled, signed } = layoutWaterSlide(view, {
-        waters: data.waters, routes: data.routes, rivers: data.rivers, pointName, credit, maxRoads: SLIDE_ROWS.roads,
+        waters: data.waters, routes: data.routes, pointName, credit, maxRoads: SLIDE_ROWS.roads,
         chosenWaters: chosen.waters || null, chosenRoutes: chosen.routes || null,
       });
+      // 하천·호수 면과 도로 선도 체크한 항목만 그린다(해제한 항목의 도형·이름표·번호 표지는 모두 사라진다).
       const fctx = final.getContext('2d');
       fctx.clearRect(0, 0, final.width, final.height);
       fctx.drawImage(scene, 0, 0);
+      drawWaterRoadScene(fctx, view, data, { waters: new Set(bubbled.map(r => r.key)), routes: new Set(signed.map(r => r.key)) });
       const pctx = preview.getContext('2d');
       pctx.drawImage(final, 0, 0);
       drawItems(pctx, items, FONT);

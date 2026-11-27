@@ -15,7 +15,7 @@ async function scene(lat, lon, radiusM) {
   const [rivers, lakes, roads] = await Promise.all(['rivers', 'lakes', 'roads'].map(layer => store.load(layer, view.bbox)));
   const waters = measureWaters([...rivers, ...lakes], lat, lon, radiusM);
   const routes = measureRoads(roads, lat, lon, radiusM);
-  return { view, rivers, waters, routes, layout: layoutWaterSlide(view, { waters, routes, rivers, pointName: '기준', credit: '출처' }) };
+  return { view, rivers, waters, routes, layout: layoutWaterSlide(view, { waters, routes, pointName: '기준', credit: '출처' }) };
 }
 
 test('말풍선 기준: 거리 구간마다 최대 2곳, 10만㎡ 이상 호수·저수지는 항상', async () => {
@@ -41,13 +41,24 @@ test('말풍선 기준: 거리 구간마다 최대 2곳, 10만㎡ 이상 호수�
   assert.equal(new Set(dedupe.filter(k => !k.startsWith('호수·저수지'))).size, dedupe.filter(k => !k.startsWith('호수·저수지')).length, '같은 구분·이름은 한 번만');
 });
 
-test('이름표: 말풍선이 없는 하천은 화면에 보이면 이름만 하천 위에 붙인다', async () => {
-  const { layout, waters } = await scene(35.0161, 126.7108, 5000);
-  const tags = layout.items.filter(i => i.name.endsWith(' 이름') && i.shape === 'rect' && i.pt === 10.5);
-  assert.ok(tags.length >= 1, '이름표가 하나 이상');
-  const bubbleNames = new Set(layout.bubbled.map(r => r.name));
-  for (const tag of tags) assert.ok(!bubbleNames.has(tag.text), `${tag.text}은(는) 말풍선과 이름표가 중복되면 안 된다`);
-  assert.ok(waters.length >= layout.bubbled.length);
+test('그리기 대상: 체크한 하천·호수·노선의 도형만 남고, 해제하면 도형이 사라진다', async () => {
+  const { selectShapes } = await import('../src/render.js');
+  const { view, waters, routes } = await scene(35.0161, 126.7108, 5000);
+  const store = fsStore();
+  const [rivers, lakes, roads] = await Promise.all(['rivers', 'lakes', 'roads'].map(layer => store.load(layer, view.bbox)));
+  const data = { rivers, lakes, roads };
+  const all = selectShapes(data);
+  assert.ok(all.rivers.length && all.lakes.length && all.roads.length);
+  const none = selectShapes(data, { waters: new Set(), routes: new Set() });
+  assert.deepEqual([none.rivers.length, none.lakes.length, none.roads.length], [0, 0, 0], '전체 해제 시 도형이 남지 않는다');
+  const one = waters.find(w => w.kind === 'river'), only = selectShapes(data, { waters: new Set([one.key]), routes: new Set() });
+  assert.ok(only.rivers.length >= 1 && only.rivers.every(r => 'r:' + r.code === one.key));
+  assert.equal(only.lakes.length, 0);
+  const route = routes[0], chosen = selectShapes(data, { waters: new Set(), routes: new Set([route.key]) });
+  assert.ok(chosen.roads.length >= 1 && chosen.roads.every(r => r.numbers.some(n => r.kind + ':' + n === route.key)));
+  assert.ok(chosen.roads.length < all.roads.length, '다른 노선 선분은 빠진다');
+  const back = selectShapes(data, { waters: new Set(waters.map(w => w.key)), routes: new Set(routes.map(r => r.key)) });
+  assert.ok(back.rivers.length >= only.rivers.length && back.roads.length >= chosen.roads.length, '다시 체크하면 돌아온다');
 });
 
 test('도로: 반경 안 노선마다 표지가 있고(최대 6), 이름은 종류+번호+번', async () => {
