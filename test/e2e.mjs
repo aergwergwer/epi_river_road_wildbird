@@ -198,6 +198,33 @@ try {
       fs.writeFileSync(path.join(outDir, s.name + '.pptx'), Buffer.from(base64, 'base64'));
       pptxBytes = Buffer.from(base64, 'base64').length;
     }
+    // 경계 API가 실패(모의 서버는 항상 실패)한 상황: 저장본 안내가 화면에 남고, 개체수 조회가 성공해도 유지되어야 한다(REV-05).
+    if (!view.statusClass.includes('error') && view.birdChecks.n) {
+      view.boundaryNote = await cdp.evaluate(`document.getElementById('boundaryNote').hidden ? '' : document.getElementById('boundaryNote').textContent`);
+      if (!/저장본 사용/.test(view.boundaryNote) || !/수집일 2026-11-20/.test(view.boundaryNote)) throw new Error('경계 저장본 안내가 화면에 있어야 합니다: ' + view.boundaryNote);
+    }
+    if (s.gis) {
+      const upload = (name, buf) => cdp.evaluate(`(()=>{const bytes=Uint8Array.from(atob('${buf.toString('base64')}'),c=>c.charCodeAt(0));const dt=new DataTransfer();dt.items.add(new File([bytes],'${name}'));const i=document.getElementById('gisFile');i.files=dt.files;i.dispatchEvent(new Event('change',{bubbles:true}))})()`);
+      const gisState = () => cdp.evaluate(`({save:document.getElementById('save').disabled,run:document.getElementById('run').disabled,resultsHidden:document.getElementById('results').hidden,gisHidden:document.getElementById('gisTable').hidden,status:document.getElementById('gisStatus').textContent})`);
+      // REV-01: 삭제 → 결과·저장 버튼 무효화 → 재조회에 GIS 없음 → 저장
+      await cdp.evaluate(`document.getElementById('gisClear').click()`);
+      const afterDelete = await gisState();
+      if (!afterDelete.save || !afterDelete.resultsHidden) throw new Error('엑셀 삭제 후 이전 결과가 남아 있습니다: ' + JSON.stringify(afterDelete));
+      await cdp.evaluate(`document.getElementById('run').click()`);
+      await until(cdp, `!document.getElementById('results').hidden`, '삭제 후 재조회');
+      const relook = await gisState();
+      if (!relook.gisHidden) throw new Error('삭제한 GIS 표가 재조회에 남아 있습니다.');
+      await cdp.evaluate(`document.getElementById('save').click()`);
+      await until(cdp, `document.getElementById('saveStatus').textContent.includes('만들었습니다')`, '삭제 후 PPTX 저장');
+      fs.writeFileSync(path.join(outDir, s.name + '-after-delete.pptx'), Buffer.from(await cdp.evaluate(`new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(window.__blobs[window.__blobs.length-1])})`), 'base64'));
+      // REV-02/03: 시트 순서가 바뀐 엑셀 + 빠른 교체(A 직후 B) → 최종은 B, 시트 이름 표시
+      await upload('gis-sample.xlsx', fs.readFileSync(new URL('./fixtures/gis-sample.xlsx', import.meta.url)));
+      await upload('gis-reordered.xlsx', fs.readFileSync(new URL('./fixtures/gis-reordered.xlsx', import.meta.url)));
+      await until(cdp, `document.getElementById('gisStatus').textContent.includes('gis-reordered.xlsx')`, '빠른 교체 완료');
+      const replaced = await gisState();
+      if (!/SECOND_SHEET/.test(replaced.status) || /gis-sample/.test(replaced.status) || !/지점 1개/.test(replaced.status)) throw new Error('빠른 교체 후 최신 파일(시트 SECOND_SHEET)이어야 합니다: ' + JSON.stringify(replaced));
+      view.fastReplace = replaced;
+    }
     report.scenarios.push({ ...s, ms: Date.now() - t0, pptxBytes, ...view });
     console.log(`${s.name}: [${view.statusClass.trim()}] ${view.status} · pptx ${pptxBytes} bytes · ${Date.now() - t0}ms`);
   }

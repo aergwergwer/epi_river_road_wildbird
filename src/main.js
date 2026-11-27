@@ -4,13 +4,29 @@ import { createBirdApi, monthText } from './birds.js';
 import { searchAddress, cleanKey } from './geocode.js';
 import { BACKGROUNDS, loadEarthEngineLibrary, loadSentinel } from './basemap.js';
 import { lookup, renderSlides, parseCoordinate } from './pipeline.js';
-import { buildReport, fmtDistance, fmtCount } from './report.js';
+import { buildReport, fmtDistance, fmtCount, boundaryLabel } from './report.js';
 import { readXlsx, parseGis } from './gis.js';
+import { createGisInput } from './gisInput.js';
 
 const $ = id => document.getElementById(id);
 const birdApi = createBirdApi();
-let gis = { points: [], name: '' };
 let store = null, birdContext = null, busy = false, last = null, eeReady = null;
+
+const gisInput = createGisInput({
+  read: async file => {
+    const rows = await readXlsx(await file.arrayBuffer());
+    return { ...parseGis(rows), sheet: rows.sheetName };
+  },
+  onInvalidate: () => invalidate(),
+  onChange: ({ message, tone, hasFile, reading, failed }) => {
+    $('gisStatus').textContent = message;
+    $('gisStatus').className = 'note' + (tone === 'error' ? ' error' : '');
+    $('gisClear').hidden = !hasFile && !reading;
+    if (failed) $('gisFile').value = '';
+    refreshControls();
+  },
+});
+const loadGis = file => gisInput.load(file);
 let address = { items: [], page: 1, pages: 0, query: null };
 
 function setStatus(text, kind = '') {
@@ -37,7 +53,7 @@ function setBusy(value) {
 }
 
 function refreshControls() {
-  $('run').disabled = busy || !store || !birdContext || !$('month').value;
+  $('run').disabled = busy || gisInput.reading || !store || !birdContext || !$('month').value;
   $('save').disabled = busy || !last;
   $('addrPrev').disabled = busy || address.page <= 1;
   $('addrNext').disabled = busy || address.page >= address.pages;
@@ -225,12 +241,16 @@ function buildTables() {
     note: s.count === null ? `개체수 ${fmtCount(s.count)}` : `개체수 ${s.count.toLocaleString('ko-KR')}`,
     extra: s.gis.map(g => `${g.kind} ${g.count}건`).join(', '),
   })), selectedSites, on => { selectedSites = on; redrawBird(); });
-  $('gisTable').hidden = !gis.points.length;
+  $('gisTable').hidden = !gisInput.points.length;
   fillTable($('gisTable'), b.gis.map(g => ({
     item: g, name: g.name, kind: g.kinds.join(', '), distance: fmtDistance(g.distance),
     note: [g.count > 1 ? `${g.count}건` : '', g.dates].filter(Boolean).join(' · '),
   })), selectedGis, on => { selectedGis = on; redrawBird(); });
   birdCaption();
+  const boundary = boundaryLabel(b.boundaryInfo);
+  $('boundaryNote').hidden = false;
+  $('boundaryNote').className = 'note' + (boundary.warn ? ' warn' : '');
+  $('boundaryNote').textContent = `조사구역 경계: ${boundary.short.replace(/^경계 /, '')} · 개체수 조사월 ${b.monthLabel}(경계 수집일과 다른 정보입니다)`;
 }
 
 async function run() {
@@ -254,7 +274,7 @@ async function run() {
     const month = $('month').value;
     const data = await lookup({
       ...place, waterRadiusM: Number($('waterRadius').value), birdRadiusM: Number($('birdRadius').value), month,
-      store, birdApi, birdContext, gisPoints: gis.points, onStatus: text => setStatus(text),
+      store, birdApi, birdContext, gisPoints: gisInput.points, onStatus: text => setStatus(text),
     });
     const pointName = $('pointName').value.trim() || '조회 지점';
     const rendered = await renderSlides(data, {
@@ -266,7 +286,7 @@ async function run() {
     showPreviews();
     buildTables();
     $('results').hidden = false;
-    const notes = [`하천·호수 ${data.waters.length}건, 국도·지방도 ${data.routes.length}개 노선, 철새 조사구역 ${data.sites.length}곳${gis.points.length ? `, GIS 지점 ${data.gis.length}곳(지도 범위)` : ''}을 찾았습니다.`];
+    const notes = [`하천·호수 ${data.waters.length}건, 국도·지방도 ${data.routes.length}개 노선, 철새 조사구역 ${data.sites.length}곳${gisInput.points.length ? `, GIS 지점 ${data.gis.length}곳(지도 범위)` : ''}을 찾았습니다.`];
     if (data.countsError) notes.push('철새 개체수를 가져오지 못해 "자료 없음"으로 표시했습니다: ' + data.countsError);
     setStatus(notes.join(' '), data.countsError ? 'warn' : '');
   } catch (error) {
@@ -301,21 +321,6 @@ async function save() {
   }
 }
 
-async function loadGis(file) {
-  gis = { points: [], name: '' };
-  $('gisClear').hidden = true;
-  if (!file) { $('gisStatus').textContent = '엑셀을 올리지 않았습니다.'; return; }
-  try {
-    const { points, skipped } = parseGis(await readXlsx(await file.arrayBuffer()));
-    gis = { points, name: file.name };
-    $('gisClear').hidden = false;
-    $('gisStatus').textContent = `${file.name} · 지점 ${points.length}개를 읽었습니다${skipped ? ` (좌표가 없거나 범위 밖인 ${skipped}행 제외)` : ''}. 조회하면 철새도래지 슬라이드에 올라갑니다.`;
-  } catch (error) {
-    $('gisFile').value = '';
-    $('gisStatus').textContent = '엑셀을 읽지 못했습니다. ' + error.message;
-  }
-  invalidate();
-}
 $('gisFile').onchange = () => loadGis($('gisFile').files[0]);
 $('gisClear').onclick = () => { $('gisFile').value = ''; loadGis(null); };
 $('run').onclick = run;

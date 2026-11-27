@@ -24,7 +24,7 @@ export async function unzip(buffer) {
     const name = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLen));
     const dataStart = local + 30 + view16(dv, local + 26) + view16(dv, local + 28);
     const raw = bytes.subarray(dataStart, dataStart + size);
-    if (/^xl\/(sharedStrings\.xml|worksheets\/sheet\d+\.xml|workbook\.xml|styles\.xml|theme\/theme1\.xml)$/.test(name)) files[name] = method === 0 ? raw : method === 8 ? await inflateRaw(raw) : null;
+    if (/^xl\/(sharedStrings\.xml|worksheets\/[^/]+\.xml|workbook\.xml|_rels\/workbook\.xml\.rels|styles\.xml|theme\/theme1\.xml)$/.test(name)) files[name] = method === 0 ? raw : method === 8 ? await inflateRaw(raw) : null;
     p += 46 + nameLen + extraLen + commentLen;
   }
   return files;
@@ -42,6 +42,28 @@ function applyTint(rgb, tint) {
   if (!tint) return rgb;
   const c = [0, 2, 4].map(i => parseInt(rgb.slice(i, i + 2), 16));
   return c.map(v => hex2(tint < 0 ? v * (1 + tint) : v + (255 - v) * tint)).join('');
+}
+
+/**
+ * 엑셀에서 보이는 첫 번째 시트의 파일을 찾는다: xl/workbook.xml의 시트 순서(숨김 시트 제외)에서 첫 시트의 관계 ID를
+ * xl/_rels/workbook.xml.rels로 실제 파일에 잇는다. 파일 번호(sheet1.xml 등)는 시트 순서와 무관하므로 쓰지 않는다.
+ * 해석하지 못하면 다른 시트로 대신하지 않고 오류를 낸다.
+ */
+export function firstSheet(files) {
+  const workbook = files['xl/workbook.xml'] && decoder.decode(files['xl/workbook.xml']);
+  const rels = files['xl/_rels/workbook.xml.rels'] && decoder.decode(files['xl/_rels/workbook.xml.rels']);
+  if (!workbook || !rels) throw new Error('엑셀의 시트 순서 정보(workbook)를 읽지 못했습니다.');
+  const attr = (tag, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
+  const sheets = [...workbook.matchAll(/<sheet\b[^>]*>/g)].map(m => m[0]).filter(tag => (attr(tag, 'state') || 'visible') === 'visible');
+  const sheet = sheets[0];
+  if (!sheet) throw new Error('엑셀에 표시되는 시트가 없습니다.');
+  const rid = [...sheet.matchAll(/\b(?:\w+:)?id="([^"]*)"/g)].map(m => m[1]).pop(); // r:id (sheetId와 구분)
+  const relTag = [...rels.matchAll(/<Relationship\b[^>]*>/g)].map(m => m[0]).find(tag => attr(tag, 'Id') === rid);
+  const target = relTag && attr(relTag, 'Target');
+  if (!target) throw new Error('첫 시트의 파일을 찾지 못했습니다.');
+  const path = target.startsWith('/') ? target.slice(1) : 'xl/' + target.replace(/^\.\//, '');
+  if (!files[path]) throw new Error('첫 시트("' + unescapeXml(attr(sheet, 'name') || '') + '")의 내용을 읽지 못했습니다.');
+  return { path, name: unescapeXml(attr(sheet, 'name') || '') };
 }
 
 /** styles.xml(+theme)로 셀 서식 번호 → 배경색(RRGGBB, 없으면 '') 표를 만든다. */
@@ -66,15 +88,14 @@ function fillTable(files) {
   return [...xfs.matchAll(/<xf\b([^>]*)/g)].map(m => fills[Number(/fillId="(\d+)"/.exec(m[1])?.[1] ?? 0)] || '');
 }
 
-/** 첫 번째 시트를 행 배열(문자열·숫자·null)로 읽는다. 결과의 fills[행][열]에는 셀 배경색(RRGGBB, 없으면 '')이 들어 있다. */
+/** 보이는 첫 번째 시트(firstSheet)를 행 배열(문자열·숫자·null)로 읽는다. 결과의 sheetName에 시트 이름이 들어 있다. 결과의 fills[행][열]에는 셀 배경색(RRGGBB, 없으면 '')이 들어 있다. */
 export async function readXlsx(buffer) {
   const files = await unzip(buffer);
-  const sheetName = Object.keys(files).filter(n => n.startsWith('xl/worksheets/')).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))[0];
-  if (!sheetName || !files[sheetName]) throw new Error('엑셀에서 시트를 찾지 못했습니다.');
+  const { path: sheetPath, name: sheetTitle } = firstSheet(files);
   const shared = files['xl/sharedStrings.xml'] ? [...decoder.decode(files['xl/sharedStrings.xml']).matchAll(/<si(?:\s[^>]*)?>([\s\S]*?)<\/si>/g)].map(m => textOf(m[1])) : [];
   const xfFill = fillTable(files);
   const rows = [], fills = [];
-  for (const row of decoder.decode(files[sheetName]).matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+  for (const row of decoder.decode(files[sheetPath]).matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
     const cells = [], colors = [];
     for (const cell of row[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
       const attrs = cell[1], body = cell[2] || '';
@@ -92,6 +113,7 @@ export async function readXlsx(buffer) {
     fills.push(Array.from(colors, c => c || ''));
   }
   rows.fills = fills;
+  rows.sheetName = sheetTitle;
   return rows;
 }
 

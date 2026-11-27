@@ -325,3 +325,107 @@ test('1장: 도로 번호 표지는 지도에 굽지 않고 옮길 수 있는 �
   assert.notEqual(national.fill, local.fill);
   assert.ok(items.some(i => i.text === '국도 13번') && items.some(i => i.text === '지방도 822번'), '이름표도 따로 있다');
 });
+
+// ───────── 적대적 리뷰 회귀(REV-01·02·03·05) ─────────
+import { createGisInput } from '../src/gisInput.js';
+import { boundaryInfo } from '../src/pipeline.js';
+import { boundaryLabel } from '../src/report.js';
+
+const fixture = name => fs.readFileSync(new URL('./fixtures/' + name, import.meta.url));
+const sheetOf = async name => { const rows = await readXlsx(fixture(name).buffer.slice(fixture(name).byteOffset, fixture(name).byteOffset + fixture(name).byteLength)); return { rows, ...parseGis(rows) }; };
+
+test('REV-02: 시트 순서가 바뀐 엑셀은 보이는 첫 시트를 읽는다(파일 번호가 아니라 workbook 순서)', async () => {
+  const normal = await sheetOf('gis-two-sheets.xlsx');
+  assert.equal(normal.rows.sheetName, 'FIRST_SHEET');
+  assert.equal(normal.points[0].title, 'FIRST_SHEET지점');
+  const reordered = await sheetOf('gis-reordered.xlsx');
+  assert.equal(reordered.rows.sheetName, 'SECOND_SHEET');
+  assert.equal(reordered.points[0].title, 'SECOND_SHEET지점');
+  const hidden = await sheetOf('gis-first-hidden.xlsx');
+  assert.equal(hidden.rows.sheetName, 'SECOND_SHEET');
+});
+
+test('REV-02: 단일 시트(기존 샘플)는 그대로 읽히고, 관계를 못 찾으면 sheet1로 대신하지 않고 오류', async () => {
+  const sample = await sheetOf('gis-sample.xlsx');
+  assert.ok(sample.points.length > 0 && sample.rows.sheetName);
+  const { firstSheet } = await import('../src/gis.js');
+  const enc = new TextEncoder();
+  const files = {
+    'xl/workbook.xml': enc.encode('<workbook xmlns:r="x"><sheets><sheet name="A" sheetId="7" r:id="rId9"/></sheets></workbook>'),
+    'xl/_rels/workbook.xml.rels': enc.encode('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+    'xl/worksheets/sheet1.xml': enc.encode('<worksheet/>'),
+  };
+  assert.throws(() => firstSheet(files), /찾지 못/);
+  files['xl/_rels/workbook.xml.rels'] = enc.encode('<Relationships><Relationship Id="rId9" Target="worksheets/data-x.xml"/></Relationships>');
+  files['xl/worksheets/data-x.xml'] = enc.encode('<worksheet/>');
+  assert.equal(firstSheet(files).path, 'xl/worksheets/data-x.xml'); // sheetId=7, rId9, 파일명 모두 서로 다름
+});
+
+function harness() {
+  const log = { invalidated: 0, msgs: [] };
+  const gates = {};
+  const gi = createGisInput({
+    read: file => new Promise((resolve, reject) => { gates[file.name] = { resolve: v => resolve({ points: v, skipped: 0, sheet: 'S' }), reject }; }),
+    onInvalidate: () => log.invalidated++,
+    onChange: c => log.msgs.push(c),
+  });
+  return { gi, gates, log };
+}
+
+test('REV-01: 삭제하면 즉시 무효화되고 GIS 점이 비며 이후 조회에 쓰이지 않는다', async () => {
+  const { gi, gates, log } = harness();
+  const p = gi.load({ name: 'a.xlsx' }); gates['a.xlsx'].resolve([{ lat: 1, lon: 2 }]); await p;
+  assert.equal(gi.points.length, 1);
+  const before = log.invalidated;
+  await gi.load(null);
+  assert.equal(log.invalidated, before + 1);
+  assert.deepEqual(gi.points, []);
+  assert.equal(gi.name, '');
+  assert.equal(log.msgs.at(-1).hasFile, false);
+});
+
+test('REV-03: 읽는 중 삭제하면 늦게 끝난 읽기가 GIS를 되살리지 못한다', async () => {
+  const { gi, gates } = harness();
+  const a = gi.load({ name: 'a.xlsx' });
+  assert.equal(gi.reading, true);
+  await gi.load(null);
+  assert.equal(gi.reading, false);
+  gates['a.xlsx'].resolve([{ lat: 1, lon: 2 }]);
+  assert.equal(await a, false);
+  assert.deepEqual(gi.points, []);
+});
+
+test('REV-03: A→B 교체에서 B가 먼저 끝나면 나중에 끝난 A는 무시, 오래된 실패는 최신 성공 문구를 덮지 않는다', async () => {
+  const { gi, gates, log } = harness();
+  const a = gi.load({ name: 'a.xlsx' }), b = gi.load({ name: 'b.xlsx' });
+  gates['b.xlsx'].resolve([{ lat: 9, lon: 9 }]); await b;
+  const msg = log.msgs.at(-1).message;
+  gates['a.xlsx'].reject(new Error('깨진 파일'));
+  assert.equal(await a, false);
+  assert.equal(gi.name, 'b.xlsx');
+  assert.equal(gi.points[0].lat, 9);
+  assert.equal(log.msgs.at(-1).message, msg);
+  assert.match(msg, /b\.xlsx/);
+});
+
+test('REV-03: 읽는 동안 reading=true(조회 버튼 차단 근거), 시작 시 이전 결과 무효화', async () => {
+  const { gi, gates, log } = harness();
+  const p = gi.load({ name: 'a.xlsx' });
+  assert.equal(gi.reading, true);
+  assert.equal(log.invalidated, 1);
+  gates['a.xlsx'].resolve([]); await p;
+  assert.equal(gi.reading, false);
+});
+
+test('REV-05: 경계 출처 정보 — 저장본/실시간/메타 없음을 구분하고 없는 수집일을 지어내지 않는다', () => {
+  assert.deepEqual(boundaryInfo({ snapshot: true, retrievedAt: '2026-11-20T12:01:55Z', source: 'u' }), { snapshot: true, retrievedAt: '2026-11-20T12:01:55Z', source: 'u' });
+  assert.equal(boundaryInfo({ snapshot: false, retrievedAt: '2026-11-27T01:00:00Z' }).snapshot, false);
+  const none = boundaryInfo({ features: [] });
+  assert.deepEqual(none, { snapshot: null, retrievedAt: '', source: '' });
+  assert.equal(boundaryInfo(undefined).retrievedAt, '');
+  const snap = boundaryLabel({ snapshot: true, retrievedAt: '2026-11-20T12:01:55Z' });
+  assert.match(snap.short, /경계 저장본 사용/); assert.match(snap.short, /2026-11-20/); assert.equal(snap.warn, true);
+  assert.match(boundaryLabel({ snapshot: true, retrievedAt: '' }).short, /수집일 미확인/);
+  assert.match(boundaryLabel({ snapshot: false, retrievedAt: '2026-11-27T00:00:00Z' }).short, /실시간/);
+  assert.match(boundaryLabel(undefined).short, /미확인/);
+});

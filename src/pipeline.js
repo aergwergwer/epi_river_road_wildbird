@@ -18,6 +18,12 @@ export function parseCoordinate(latText, lonText) {
 }
 
 /** 위치 하나에 대한 하천·도로·철새도래지 조회. */
+/** 경계 자료의 출처 상태. snapshot이 true/false가 아니면(서버가 알려주지 않음) null로 두고 '미확인'으로 다룬다. 없는 수집일은 지어내지 않는다. */
+export function boundaryInfo(boundaries) {
+  const at = typeof boundaries?.retrievedAt === 'string' && !Number.isNaN(Date.parse(boundaries.retrievedAt)) ? boundaries.retrievedAt : '';
+  return { snapshot: boundaries?.snapshot === true ? true : boundaries?.snapshot === false ? false : null, retrievedAt: at, source: typeof boundaries?.source === 'string' ? boundaries.source : '' };
+}
+
 export async function lookup({ lat, lon, waterRadiusM, birdRadiusM, month, store, birdApi, birdContext, gisPoints = [], onStatus = () => {} }) {
   const waterView = makeView({ lat, lon, radiusM: waterRadiusM, width: MAP1.width, height: MAP1.height, fill: RADIUS_FILL });
   onStatus('하천·호수·도로 데이터를 읽는 중…');
@@ -37,7 +43,8 @@ export async function lookup({ lat, lon, waterRadiusM, birdRadiusM, month, store
     // 개체수 조회가 실패해도 경계·거리는 보여 준다. 호출자가 경고를 띄운다.
     try { applyCounts(sites, await birdApi.counts(ids, month)); } catch (error) { countsError = error.message; }
   }
-  return { lat, lon, waterRadiusM, birdRadiusM, month, rivers, lakes, roads, waters, routes, sites, gis, countsError, boundaries: birdContext.boundaries.features };
+  return { lat, lon, waterRadiusM, birdRadiusM, month, rivers, lakes, roads, waters, routes, sites, gis, countsError, boundaries: birdContext.boundaries.features,
+    boundaryInfo: boundaryInfo(birdContext.boundaries), generatedAt: new Date().toISOString() };
 }
 
 export function newCanvas(size, createCanvas = () => document.createElement('canvas')) {
@@ -107,7 +114,7 @@ export async function renderSlides(data, { pointName, backgrounds, deps = {}, on
     const boundary = deps.canvas3 || newCanvas(MAP2);
     const preview = deps.preview2 || newCanvas(MAP2);
     out.bird = {
-      radiusM: data.birdRadiusM, monthLabel: monthText(data.month), sites: data.sites, credit, preview, gis: data.gis, allGis: data.gis,
+      radiusM: data.birdRadiusM, monthLabel: monthText(data.month), sites: data.sites, credit, preview, gis: data.gis, allGis: data.gis, boundaryInfo: data.boundaryInfo, generatedAt: data.generatedAt,
       baseImage: encode(base, backgrounds.bird.mode), countsError: data.countsError, allSites: data.sites,
     };
     // chosen: 지도에 올릴 조사구역 Set. 없으면 지도 범위의 전부.
