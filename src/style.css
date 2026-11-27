@@ -12,7 +12,7 @@ label { display: grid; gap: 4px; font-weight: 650; font-size: 14px; }
 input, select, button { font: inherit; padding: 9px 10px; border: 1px solid #a8bfc5; border-radius: 8px; background: #fff; color: inherit; }
 input[type=number] { width: 150px; }
 #pointName { width: 220px; }
-#addrQuery { width: min(380px, 80vw); }
+#addrQuery, #vworldKey { width: min(380px, 80vw); }
 button { background: #076e64; color: #fff; border: 0; font-weight: 650; cursor: pointer; }
 button:disabled { background: #e3ebed; color: #52666c; cursor: default; }
 button.primary { padding: 11px 22px; }

@@ -51,8 +51,9 @@ function invalidate() {
 
 // ---- 초기화: 타일 목록과 철새 자료 연결 ----
 async function init() {
-  for (const [value, info] of Object.entries(BACKGROUNDS)) $('background').append(new Option(info.label, value));
-  $('background').value = 'osm';
+  for (const id of ['waterBackground', 'birdBackground']) for (const [value, info] of Object.entries(BACKGROUNDS)) $(id).append(new Option(info.label, value));
+  $('waterBackground').value = 'Satellite'; // 하천·도로: 위성
+  $('birdBackground').value = 'Base'; // 철새도래지: 일반지도
   const [manifest, bird] = await Promise.allSettled([
     fetch('assets/tiles/manifest.json').then(r => { if (!r.ok) throw new Error('assets/tiles/manifest.json'); return r.json(); }),
     Promise.all([birdApi.metadata(), birdApi.boundaries()]),
@@ -170,9 +171,16 @@ async function run() {
   if (busy) return;
   let place;
   try { place = parseCoordinate($('lat').value, $('lon').value); } catch (error) { setStatus(error.message, 'error'); return; }
-  const mode = $('background').value, key = cleanKey($('vworldKey').value);
-  if (BACKGROUNDS[mode].needsKey && !key) { setStatus('브이월드 배경지도에는 인증키가 필요합니다. 인증키를 입력하거나 다른 배경을 고르세요.', 'error'); return; }
-  if (mode === 'sentinel' && !eeReady) { setStatus('Sentinel-2 배경은 Earth Engine 연결(Google 로그인)이 필요합니다.', 'error'); return; }
+  const modes = { water: $('waterBackground').value, bird: $('birdBackground').value }, key = cleanKey($('vworldKey').value);
+  for (const [label, mode] of [['하천·도로', modes.water], ['철새도래지', modes.bird]]) {
+    if (BACKGROUNDS[mode].needsKey && !key) {
+      $('addressBox').open = true;
+      $('vworldKey').focus();
+      setStatus(`${label} 배경(${BACKGROUNDS[mode].label})에는 브이월드 인증키가 필요합니다. 위치 항목의 "브이월드 인증키" 칸에 입력하거나 다른 배경을 고르세요.`, 'error');
+      return;
+    }
+  }
+  if (Object.values(modes).includes('sentinel') && !eeReady) { setStatus('Sentinel-2 배경은 Earth Engine 연결(Google 로그인)이 필요합니다.', 'error'); return; }
   setBusy(true);
   $('results').hidden = true;
   last = null;
@@ -184,11 +192,11 @@ async function run() {
     });
     const pointName = $('pointName').value.trim() || '조회 지점';
     const rendered = await renderSlides(data, {
-      pointName, background: { mode, key },
+      pointName, backgrounds: { water: { mode: modes.water, key }, bird: { mode: modes.bird, key } },
       deps: { sentinelFor: view => loadSentinel(view, ee) },
       onStatus: text => setStatus(text),
     });
-    last = { data, rendered, pointName, mode };
+    last = { data, rendered, pointName };
     for (const [id, source] of [['preview1', rendered.water.preview], ['preview2', rendered.bird.preview]]) {
       const canvas = $(id);
       canvas.width = source.width;
@@ -242,10 +250,12 @@ $('addressForm').addEventListener('submit', event => { event.preventDefault(); f
 $('addrPrev').onclick = () => findAddress(address.page - 1);
 $('addrNext').onclick = () => findAddress(address.page + 1);
 $('eeLogin').onclick = connectEarthEngine;
-$('background').onchange = () => {
-  $('eePanel').hidden = $('background').value !== 'sentinel';
-  invalidate();
-};
+for (const id of ['waterBackground', 'birdBackground']) {
+  $(id).onchange = () => {
+    $('eePanel').hidden = ![$('waterBackground').value, $('birdBackground').value].includes('sentinel');
+    invalidate();
+  };
+}
 for (const id of ['pointName', 'lat', 'lon', 'waterRadius', 'birdRadius', 'month', 'vworldKey']) $(id).addEventListener('input', invalidate);
 for (const id of ['eeProject', 'eeClient']) $(id).addEventListener('input', () => { eeReady = null; $('eeStatus').textContent = '설정이 바뀌었습니다. Google 로그인으로 다시 연결해 주세요.'; });
 

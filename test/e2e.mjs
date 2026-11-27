@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 실제 브라우저(Chrome headless) 종단 점검. 의존 패키지 없이 DevTools 프로토콜을 직접 쓴다.
 // 사용법: node test/e2e.mjs [출력폴더=/tmp/e2e]
-// - 국립생물자원관은 가짜 응답(test/mock-nibr.mjs), OSM 타일은 합성 PNG로 대신한다. 외부 네트워크는 쓰지 않는다.
+// - 국립생물자원관은 가짜 응답(test/mock-nibr.mjs), OSM·브이월드 타일은 합성 PNG로 대신한다. 외부 네트워크는 쓰지 않는다.
 // - 결과: <출력폴더>/*.pptx, *.png(미리보기 캔버스), report.json
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -25,7 +25,7 @@ function chunk(type, data) {
   out.writeUInt32BE(crc32(body), 8 + data.length);
   return out;
 }
-function tilePng(z, x, y) {
+function tilePng(z, x, y, dark = false) {
   const size = 256, raw = Buffer.alloc((size * 3 + 1) * size);
   const hue = (x * 37 + y * 91 + z * 13) % 60;
   for (let j = 0; j < size; j++) {
@@ -33,9 +33,9 @@ function tilePng(z, x, y) {
     for (let i = 0; i < size; i++) {
       const edge = i === 0 || j === 0 || i === 255 || j === 255, grid = i % 64 === 0 || j % 64 === 0;
       const o = j * (size * 3 + 1) + 1 + i * 3;
-      raw[o] = edge ? 90 : grid ? 205 : 232 - hue / 3;
-      raw[o + 1] = edge ? 90 : grid ? 215 : 236 - hue / 4;
-      raw[o + 2] = edge ? 90 : grid ? 210 : 226 + hue / 4;
+      raw[o] = edge ? 90 : grid ? (dark ? 70 : 205) : dark ? 58 + hue : 232 - hue / 3;
+      raw[o + 1] = edge ? 90 : grid ? (dark ? 90 : 215) : dark ? 82 + hue : 236 - hue / 4;
+      raw[o + 2] = edge ? 90 : grid ? (dark ? 66 : 210) : dark ? 52 + hue / 2 : 226 + hue / 4;
     }
   }
   const header = Buffer.alloc(13);
@@ -71,10 +71,13 @@ async function until(cdp, expression, label, timeoutMs = 120000) {
 }
 
 const scenarios = [
-  { name: 'seoul-none', lat: 37.5665, lon: 126.978, pointName: '서울시청', background: 'none', waterRadius: 5000, birdRadius: 20000 },
-  { name: 'gwangju-osm', lat: 35.1595, lon: 126.8526, pointName: '광주 영산강 인근', background: 'osm', waterRadius: 3000, birdRadius: 30000 },
-  { name: 'seoul-counts-fail', lat: 37.5665, lon: 126.978, pointName: '개체수 실패', background: 'none', waterRadius: 5000, birdRadius: 20000, fail: 'counts' },
-  { name: 'gangneung-none-1500', lat: 37.7519, lon: 128.8761, pointName: '강릉', background: 'none', waterRadius: 1500, birdRadius: 50000 },
+  // 기본 설정: 하천·도로는 브이월드 위성, 철새도래지는 브이월드 일반지도
+  { name: 'seoul-satellite', lat: 37.5665, lon: 126.978, pointName: '서울시청', waterBg: 'Satellite', birdBg: 'Base', key: 'TESTKEY', waterRadius: 5000, birdRadius: 20000 },
+  { name: 'naju-sample', lat: 35.0161, lon: 126.7108, pointName: '나주 육용오리(11.26)', waterBg: 'Satellite', birdBg: 'Base', key: 'TESTKEY', waterRadius: 5000, birdRadius: 50000 },
+  { name: 'gwangju-osm', lat: 35.1595, lon: 126.8526, pointName: '광주 영산강 인근', waterBg: 'osm', birdBg: 'osm', key: '', waterRadius: 3000, birdRadius: 50000 },
+  { name: 'seoul-counts-fail', lat: 37.5665, lon: 126.978, pointName: '개체수 실패', waterBg: 'none', birdBg: 'none', key: '', waterRadius: 5000, birdRadius: 20000, fail: 'counts' },
+  { name: 'gangneung-1500', lat: 37.7519, lon: 128.8761, pointName: '강릉', waterBg: 'Satellite', birdBg: 'Base', key: 'TESTKEY', waterRadius: 1500, birdRadius: 30000 },
+  { name: 'nokey-error', lat: 37.5665, lon: 126.978, pointName: '키 없음', waterBg: 'Satellite', birdBg: 'Base', key: '', waterRadius: 5000, birdRadius: 20000, expectError: true },
 ];
 
 const server = await startServer({ port: 0 + 8793, mock: true });
@@ -92,16 +95,20 @@ try {
     if (msg.method === 'Runtime.exceptionThrown') report.consoleErrors.push(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text);
     if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') report.consoleErrors.push(msg.params.args.map(a => a.value ?? a.description).join(' '));
     if (msg.method === 'Fetch.requestPaused') {
-      const m = msg.params.request.url.match(/tile\.openstreetmap\.org\/(\d+)\/(\d+)\/(\d+)\.png/);
-      report.osmTiles = (report.osmTiles || 0) + 1;
-      cdp.send('Fetch.fulfillRequest', { requestId: msg.params.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'image/png' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: tilePng(...m.slice(1).map(Number)).toString('base64') });
+      const url = msg.params.request.url;
+      const osm = url.match(/tile\.openstreetmap\.org\/(\d+)\/(\d+)\/(\d+)\.png/);
+      const vworld = url.match(/api\.vworld\.kr\/req\/wmts\/1\.0\.0\/[^/]+\/(\w+)\/(\d+)\/(\d+)\/(\d+)\./);
+      report.osmTiles = (report.osmTiles || 0) + (osm ? 1 : 0);
+      report.vworldTiles = (report.vworldTiles || 0) + (vworld ? 1 : 0);
+      const png = osm ? tilePng(Number(osm[1]), Number(osm[2]), Number(osm[3])) : tilePng(Number(vworld[2]), Number(vworld[4]), Number(vworld[3]), vworld[1] === 'Satellite');
+      cdp.send('Fetch.fulfillRequest', { requestId: msg.params.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'image/png' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: png.toString('base64') });
     }
   });
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
   await cdp.send('Network.enable');
   await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
-  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: 'https://tile.openstreetmap.org/*' }] });
+  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: 'https://tile.openstreetmap.org/*' }, { urlPattern: 'https://api.vworld.kr/req/wmts/*' }] });
 
   for (const s of scenarios) {
     const t0 = Date.now();
@@ -110,7 +117,7 @@ try {
     await until(cdp, `document.readyState==='complete' && !document.getElementById('run').disabled`, '초기화');
     await cdp.evaluate(`(()=>{window.__blobs=[];const o=URL.createObjectURL;URL.createObjectURL=b=>{window.__blobs.push(b);return o(b)};
       const set=(id,v)=>{const e=document.getElementById(id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))};
-      set('pointName',${JSON.stringify(s.pointName)});set('lat','${s.lat}');set('lon','${s.lon}');set('waterRadius','${s.waterRadius}');set('birdRadius','${s.birdRadius}');set('background','${s.background}');
+      set('pointName',${JSON.stringify(s.pointName)});set('lat','${s.lat}');set('lon','${s.lon}');set('waterRadius','${s.waterRadius}');set('birdRadius','${s.birdRadius}');set('vworldKey','${s.key}');set('waterBackground','${s.waterBg}');set('birdBackground','${s.birdBg}');
       document.getElementById('run').click();})()`);
     await until(cdp, `!document.getElementById('results').hidden || document.getElementById('status').className.includes('error')`, '조회');
     const view = await cdp.evaluate(`({status:document.getElementById('status').textContent,statusClass:document.getElementById('status').className,
@@ -118,6 +125,12 @@ try {
       road:[...document.querySelectorAll('#roadRows tr')].map(r=>r.innerText.replace(/\\s+/g,' ')),
       bird:[...document.querySelectorAll('#birdRows tr')].map(r=>r.innerText.replace(/\\s+/g,' ')),
       caption:document.getElementById('birdCaption').textContent})`);
+    if (s.expectError) {
+      if (!view.statusClass.includes('error') || !/인증키/.test(view.status)) throw new Error('키가 없을 때 안내 오류가 나와야 합니다: ' + view.status);
+      report.scenarios.push({ ...s, ms: Date.now() - t0, ...view });
+      console.log(`${s.name}: [${view.statusClass.trim()}] ${view.status}`);
+      continue;
+    }
     for (const id of ['preview1', 'preview2']) {
       const data = await cdp.evaluate(`document.getElementById('${id}').toDataURL('image/png').split(',')[1]`);
       fs.writeFileSync(path.join(outDir, `${s.name}-${id}.png`), Buffer.from(data, 'base64'));
@@ -142,5 +155,5 @@ try {
   await sleep(500);
   try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 임시 폴더 정리 실패는 무시 */ }
 }
-console.log('콘솔 오류:', report.consoleErrors.length ? report.consoleErrors : '없음', '· OSM 타일 요청:', report.osmTiles ?? 0, '· JS 힙(MB):', report.heap);
+console.log('콘솔 오류:', report.consoleErrors.length ? report.consoleErrors : '없음', '· OSM 타일 요청:', report.osmTiles ?? 0, '· 브이월드 타일 요청:', report.vworldTiles ?? 0, '· JS 힙(MB):', report.heap);
 process.exit(0);

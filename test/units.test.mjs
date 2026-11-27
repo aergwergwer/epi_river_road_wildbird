@@ -5,7 +5,9 @@ import path from 'node:path';
 import { parseCoordinate } from '../src/pipeline.js';
 import { surveySites, applyCounts, norm } from '../src/birds.js';
 import { searchVworld, searchNominatim, searchAddress } from '../src/geocode.js';
-import { layoutOverlay, textWidth } from '../src/render.js';
+import { textWidth } from '../src/render.js';
+import { MAP1, MAP2, SIGN, layoutWaterSlide, layoutBirdSlide, kmText, meterText, roadLabel } from '../src/layout.js';
+import { routeName } from '../src/analysis.js';
 import { makeView } from '../src/view.js';
 import { tilePlan, tileUrls, MAX_TILES } from '../src/basemap.js';
 import { measureBoundary } from '../src/analysis.js';
@@ -91,33 +93,88 @@ test('OSM 주소 검색 대체 경로: 키가 없으면 Nominatim을 쓴다', as
   await assert.rejects(searchNominatim('부산', { fetchImpl: async () => ({ ok: false, status: 429 }) }), /429/);
 });
 
-test('오버레이 배치: 서로 겹치지 않고 화면 안에 들어온다', () => {
-  const view = makeView({ lat: 37.5, lon: 127, radiusM: 5000, width: 1580, height: 1220 });
-  const [cx, cy] = view.toPx(127, 37.5);
-  const badges = Array.from({ length: 10 }, (_, i) => ({ x: cx + (i % 3) * 6, y: cy + (i % 2) * 6, text: i + 1, kind: 'num', fill: '#123', name: '이름' + i }));
-  const items = layoutOverlay(view, { pointName: '조회 지점', badges });
-  assert.equal(items.filter(i => i.type === 'badge').length, 10);
-  for (const item of items) {
-    assert.ok(item.x - item.w / 2 >= 0 && item.x + item.w / 2 <= view.width && item.y - item.h / 2 >= 0 && item.y + item.h / 2 <= view.height, JSON.stringify(item));
-  }
-  const solid = items.filter(i => i.type !== 'name');
+const apart = (p, q, gap = 0) => p.x + p.w + gap <= q.x || q.x + q.w + gap <= p.x || p.y + p.h + gap <= q.y || q.y + q.h + gap <= p.y;
+const insideMap = (item, map) => item.x >= 0 && item.y >= 0 && item.x + item.w <= map.width && item.y + item.h <= map.height;
+
+test('도로 이름: 국도 16번 형식', () => {
+  assert.equal(routeName({ kind: '국도', number: 16 }), '국도 16번');
+  assert.equal(roadLabel({ kind: '지방도', number: 820 }), '지방도 820번');
+});
+
+test('국도와 지방도 표지는 모양·색이 다르다', () => {
+  assert.equal(SIGN.국도.ellipse, true);
+  assert.equal(SIGN.지방도.ellipse, false);
+  assert.notEqual(SIGN.국도.fill, SIGN.지방도.fill);
+});
+
+test('거리 문구', () => {
+  assert.equal(meterText({ inside: true, distance: 0 }), '구역 안');
+  assert.equal(meterText({ inside: false, distance: 591.4 }), '591 m');
+  assert.equal(meterText({ inside: false, distance: 2340 }), '2.3 km');
+  assert.equal(kmText(0), '0km');
+  assert.equal(kmText(30), '<0.1km');
+  assert.equal(kmText(9712), '9.7km');
+  assert.equal(kmText(Infinity), '경계 미확인');
+});
+
+test('1장 배치: 도로 표지·이름, 하천 말풍선(거리+이름)이 겹치지 않고 화면 안에 들어온다', () => {
+  const view = makeView({ lat: 37.5, lon: 127, radiusM: 5000, width: MAP1.width, height: MAP1.height });
+  const around = (i, r) => { const a = i * 0.9; return [127 + Math.cos(a) * r * 0.00001, 37.5 + Math.sin(a) * r * 0.000009]; };
+  const waters = Array.from({ length: 14 }, (_, i) => ({
+    name: '하천' + i, kind: i % 5 === 4 ? 'lake' : 'river', grade: i % 5 === 4 ? '호수·저수지' : i % 2 ? '지방하천' : '국가하천',
+    distance: 300 + i * 330, inside: false, area: i % 5 === 4 ? 150000 : 0, point: around(i, 300 + i * 330),
+  }));
+  const routes = [{ kind: '국도', number: 13, distance: 400, point: around(20, 400) }, { kind: '국도', number: 23, distance: 900, point: around(21, 900) }, { kind: '지방도', number: 820, distance: 1500, point: around(22, 1500) }];
+  const { signs, items } = layoutWaterSlide(view, { waters, routes, pointName: '나주 육용오리', credit: '하천: 기후에너지환경부 · 도로: 국토지리정보원 · © 공간정보 오픈플랫폼(브이월드)' });
+  assert.deepEqual(signs.map(x => x.kind + x.number), ['국도13', '국도23', '지방도820']);
+  assert.deepEqual(items.filter(i => i.name.endsWith(' 이름') && /번 이름$/.test(i.name)).map(i => i.text), ['국도 13번', '국도 23번', '지방도 820번']);
+  // 하천 말풍선: 거리 구간마다 최대 2개 + 큰 호수 전부
+  const bubbles = items.filter(i => i.name.endsWith(' 하천명'));
+  const normal = bubbles.filter(i => !/^하천(4|9|14)/.test(i.text) && !waters.find(w => w.name === i.text && w.kind === 'lake'));
+  assert.ok(normal.length <= 8 && normal.length >= 4, String(normal.length));
+  assert.ok(waters.filter(w => w.kind === 'lake').every(w => bubbles.some(b => b.text === w.name)), '10만㎡ 이상 호수는 항상 표시');
+  for (const item of items) assert.ok(insideMap(item, MAP1), JSON.stringify(item));
+  const solid = [...items.filter(i => i.shape !== 'ellipse' || i.name !== '기준점'), ...signs];
   for (let a = 0; a < solid.length; a++) for (let b = a + 1; b < solid.length; b++) {
     const p = solid[a], q = solid[b];
-    const apart = p.x + p.w / 2 <= q.x - q.w / 2 || q.x + q.w / 2 <= p.x - p.w / 2 || p.y + p.h / 2 <= q.y - q.h / 2 || q.y + q.h / 2 <= p.y - p.h / 2;
-    assert.ok(apart, `겹침: ${JSON.stringify(p)} / ${JSON.stringify(q)}`);
+    if (p.name?.endsWith(' 거리') && q.name === p.name.replace(' 거리', ' 하천명')) continue; // 같은 말풍선의 위·아래 칸
+    if (q.name?.endsWith(' 거리') && p.name === q.name.replace(' 거리', ' 하천명')) continue;
+    assert.ok(apart(p, q), `겹침: ${JSON.stringify(p)} / ${JSON.stringify(q)}`);
+  }
+});
+
+test('2장 배치: 개체수·거리 칸이 겹치지 않고 지도 안에 들어온다', () => {
+  const view = makeView({ lat: 35, lon: 127, radiusM: 50000, width: MAP2.width, height: MAP2.height });
+  const sites = Array.from({ length: 12 }, (_, i) => ({
+    name: '조사구역' + i, count: i === 3 ? null : 1000 + i * 111, distance: 1500 + i * 4000, point: [127 + Math.cos(i * 0.6) * 0.09 * (1 + i * 0.3), 35 + Math.sin(i * 0.6) * 0.07 * (1 + i * 0.3)],
+  }));
+  const { items } = layoutBirdSlide(view, { sites, pointName: '나주 육용오리' });
+  const names = items.filter(i => i.name.startsWith('도래지'));
+  assert.equal(names.length, 12);
+  assert.ok(names.some(i => /자료 없음$/.test(i.text)) && names.some(i => /1,111수$/.test(i.text)));
+  assert.ok(items.some(i => i.text === '1.5km'));
+  for (const item of items) assert.ok(insideMap(item, MAP2), JSON.stringify(item));
+  const boxes = items.filter(i => i.name !== '조회 지점');
+  for (let a = 0; a < boxes.length; a++) for (let b = a + 1; b < boxes.length; b++) {
+    const p = boxes[a], q = boxes[b];
+    const pair = p.name.startsWith('구역') && q.name.startsWith('도래지') || p.name.startsWith('도래지') && q.name.startsWith('구역');
+    if (pair && Math.abs(p.x - q.x) < 20 && (Math.abs(p.y + p.h - q.y) < 1 || Math.abs(q.y + q.h - p.y) < 1)) continue; // 같은 칸의 위·아래
+    if (apart(p, q)) continue;
+    // 빈 자리가 없으면 겹칠 수 있으므로 이 합성 데이터에서는 거리 칸이 이름 칸 바로 위에 붙은 경우만 허용
+    assert.fail(`겹침: ${JSON.stringify(p)} / ${JSON.stringify(q)}`);
   }
   assert.ok(textWidth('한글', 20) > textWidth('ab', 20));
 });
 
 test('지도 범위: 반경 원이 화면 짧은 변의 80%를 차지한다', () => {
-  const view = makeView({ lat: 36, lon: 128, radiusM: 3000, width: 1580, height: 1220, fill: 0.8 });
+  const view = makeView({ lat: 36, lon: 128, radiusM: 3000, width: 1920, height: 1080, fill: 0.8 });
   const [x] = view.toPx(128, 36), [x2] = view.toPx(...[128 + 3000 / (111320 * Math.cos(36 * Math.PI / 180)), 36]);
-  assert.ok(Math.abs((x2 - x) * 2 - 0.8 * 1220) < 6, String((x2 - x) * 2));
+  assert.ok(Math.abs((x2 - x) * 2 - 0.8 * 1080) < 6, String((x2 - x) * 2));
 });
 
 test('배경 타일: 타일 수가 한도를 넘지 않고 URL이 맞다', () => {
   for (const radiusM of [1500, 5000, 50000]) {
-    const plan = tilePlan(makeView({ lat: 37.5, lon: 127, radiusM, width: 1580, height: 1220 }));
+    const plan = tilePlan(makeView({ lat: 37.5, lon: 127, radiusM, width: 1920, height: 1080 }));
     assert.ok(plan.count <= MAX_TILES && plan.count >= 1, `${radiusM}: ${plan.count}`);
   }
   assert.deepEqual(tileUrls('osm', '', 14, 3, 5), ['https://tile.openstreetmap.org/14/3/5.png']);

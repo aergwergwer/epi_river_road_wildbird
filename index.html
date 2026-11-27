@@ -21,8 +21,11 @@
     <label>위도 <input id="lat" type="number" step="any" min="32" max="40" placeholder="37.5665" inputmode="decimal"></label>
     <label>경도 <input id="lon" type="number" step="any" min="124" max="132" placeholder="126.9780" inputmode="decimal"></label>
   </div>
-  <details id="addressBox">
+  <details id="addressBox" open>
     <summary>주소·장소명으로 찾기</summary>
+    <div class="row">
+      <label>브이월드 인증키 <input id="vworldKey" type="password" autocomplete="off" placeholder="주소 검색과 브이월드 지도(위성·일반)에 쓰입니다"></label>
+    </div>
     <form id="addressForm" class="row">
       <label>유형
         <select id="addrType">
@@ -35,7 +38,7 @@
       <label>지역으로 좁히기 <input id="addrRegion" placeholder="선택 · 시도 또는 시군구" autocomplete="off"></label>
       <button id="addrSearch" type="submit">후보 검색</button>
     </form>
-    <p id="addrStatus" class="note" role="status">브이월드 인증키가 있으면 브이월드로, 없으면 OpenStreetMap으로 검색합니다(유형 선택은 브이월드에만 적용).</p>
+    <p id="addrStatus" class="note" role="status">인증키를 넣으면 브이월드로, 비워 두면 OpenStreetMap으로 검색합니다(주소 유형 선택은 브이월드에만 적용). 같은 키가 하천·도로 위성지도와 철새도래지 일반지도에도 쓰입니다.</p>
     <div id="addrResults" class="candidates"></div>
     <div id="addrPager" class="row" hidden>
       <button id="addrPrev" type="button">이전</button><span id="addrPage"></span><button id="addrNext" type="button">다음</button>
@@ -55,8 +58,8 @@
     <label>철새 조사월 <select id="month"><option value="">자료 연결 중…</option></select></label>
   </div>
   <div class="row">
-    <label>지도 배경 <select id="background"></select></label>
-    <label id="keyRow">브이월드 인증키 <input id="vworldKey" type="password" autocomplete="off" placeholder="선택 · 주소 검색, 브이월드 배경"></label>
+    <label>하천·도로 배경지도 <select id="waterBackground"></select></label>
+    <label>철새도래지 배경지도 <select id="birdBackground"></select></label>
   </div>
   <div id="eePanel" hidden>
     <h3>Sentinel-2 (Google Earth Engine) 연결</h3>

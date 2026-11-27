@@ -61,7 +61,7 @@ export function measureWaters(features, lat, lon, radiusM) {
   return [...rows.values()].sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name, 'ko'));
 }
 
-export const routeName = route => `${route.kind} ${route.number}호선`;
+export const routeName = route => `${route.kind} ${route.number}번`;
 
 /** 국도·지방도 노선별 최단거리. 한 도형이 여러 노선번호를 가지면 각 노선에 모두 반영한다. */
 export function measureRoads(roads, lat, lon, radiusM) {
