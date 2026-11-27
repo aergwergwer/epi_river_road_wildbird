@@ -137,13 +137,13 @@ export function textWidth(text, fontPx) {
   return [...String(text)].reduce((sum, ch) => sum + (ch.charCodeAt(0) >= 0x1100 ? 1 : 0.58), 0) * fontPx;
 }
 
-/** GIS 엑셀 지점: 주황 점(흰 테두리). groups는 groupGis의 묶음 목록으로, 묶음 안의 모든 좌표에 점을 찍는다. */
+/** GIS 엑셀 지점: 엑셀 '표현색'(없으면 주황)의 점에 흰 테두리. groups는 groupGis의 묶음 목록으로, 묶음 안의 모든 좌표에 점을 찍는다. */
 export function drawGisDots(ctx, view, groups) {
   ctx.lineWidth = 2.5;
   ctx.strokeStyle = '#ffffff';
-  ctx.fillStyle = '#e8590c';
   for (const group of groups) for (const p of group.points) {
     const [x, y] = view.toPx(p.lon, p.lat);
+    ctx.fillStyle = '#' + (p.color || 'E8590C');
     ctx.beginPath();
     ctx.arc(x, y, 7, 0, Math.PI * 2);
     ctx.fill();

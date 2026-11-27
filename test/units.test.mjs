@@ -171,7 +171,7 @@ test('2장 배치: 개체수·거리 칸이 겹치지 않고 지도 안에 들�
   assert.ok(names.some(i => /자료 없음$/.test(i.text)) && names.some(i => /1,111수$/.test(i.text)));
   assert.ok(items.some(i => i.text === '1.5km'));
   for (const item of items) assert.ok(insideMap(item, MAP2), JSON.stringify(item));
-  const boxes = items.filter(i => i.name !== '조회 지점');
+  const boxes = items.filter(i => !i.name.startsWith('조회 지점')); // 기준점 표시·이름 칸과의 겹침은 따로(가능하면 피하되 강제하지 않음)
   for (let a = 0; a < boxes.length; a++) for (let b = a + 1; b < boxes.length; b++) {
     const p = boxes[a], q = boxes[b];
     const pair = p.name.startsWith('구역') && q.name.startsWith('도래지') || p.name.startsWith('도래지') && q.name.startsWith('구역');
@@ -246,7 +246,8 @@ test('GIS 엑셀: 첫 시트를 읽고 좌표 없는 행은 건너뛴다', async
   const { points, skipped } = parseGis(await readXlsx(fs.readFileSync(gisFile)));
   assert.equal(points.length, 6);
   assert.equal(skipped, 1);
-  assert.deepEqual(points[0], { kind: '25/26', lat: 35.03, lon: 126.73, title: '시험천', date: '2025-12-01', note: '' });
+  assert.deepEqual(points[0], { kind: '25/26', lat: 35.03, lon: 126.73, title: '시험천', date: '2025-12-01', note: '', color: '377EB8' });
+  assert.deepEqual(points.map(p => p.color), ['377EB8', 'FF0000', 'A6CEE3', 'FFFF33', '', '377EB8'], '표현색 열의 배경색');
   assert.equal(points[3].date, '');
   assert.throws(() => parseGis([['이름', '값']]), /구분.*위도.*경도/);
   await assert.rejects(readXlsx(Buffer.from('not a zip file at all, just text')), /엑셀/);
@@ -260,6 +261,7 @@ test('GIS 묶기: 같은 제목이 1km 안이면 한 칸, 지도 범위 밖은 �
   const stream = groups.find(g => g.name === '시험천');
   assert.deepEqual(stream.kinds, ['25/26', '26/27 H5']);
   assert.equal(stream.count, 2);
+  assert.equal(stream.color, 'FF0000', '묶음 칸은 가장 최근 건의 색');
   assert.match(stream.label, /시험천 25\/26·26\/27 H5 \(2건\)/);
   assert.equal(stream.dates, '2025-12-01 ~ 2026-11-20');
   assert.ok(stream.distance > 1000 && stream.distance < 3000, String(stream.distance));
@@ -284,7 +286,28 @@ test('GIS 칸: 주황 칸으로 올라가고 체크한 묶음만 올라간다', 
   const { items } = layoutBirdSlide(view, { sites: groups, pointName: '나주' });
   const names = items.filter(i => i.name.startsWith('GIS 지점 이름'));
   assert.equal(names.length, 4);
-  assert.ok(names.every(i => i.fill === 'FFF2CC'));
+  assert.deepEqual(names.map(i => i.line.color).sort(), ['377EB8'.length && 'A6CEE3', 'E8590C', 'FF0000', 'FFFF33'].sort(), '표현색(없으면 주황)이 칸 테두리 색');
+  const dist = items.filter(i => i.name === 'GIS 지점 거리 (편집 가능)');
+  assert.ok(dist.some(i => i.fill === 'FF0000' && i.color === 'FFFFFF') && dist.some(i => i.fill === 'FFFF33' && i.color === '000000'), '거리 칸은 표현색, 글자는 읽히는 색');
+  assert.ok(items.filter(i => i.name.startsWith('도래지')).concat(items.filter(i => i.name.startsWith('GIS'))).every(i => i.pt <= 18), '슬라이드 2 글씨는 18pt 이하');
   assert.ok(names.some(i => /시험천 25\/26·26\/27 H5 \(2건\)/.test(i.text)));
   assert.equal(layoutBirdSlide(view, { sites: groups.slice(0, 1), pointName: '나주' }).items.filter(i => i.name.startsWith('GIS 지점 이름')).length, 1);
+});
+
+test('표현색 해석: 16진수·색 이름·ARGB', async () => {
+  const { parseColor } = await import('../src/gis.js');
+  assert.equal(parseColor('#ff0000'), 'FF0000');
+  assert.equal(parseColor('377eb8'), '377EB8');
+  assert.equal(parseColor('FF00B050'), '00B050');
+  assert.equal(parseColor('#f00'), 'FF0000');
+  assert.equal(parseColor('rgb(0, 128, 255)'), '0080FF');
+  assert.equal(parseColor('빨강'), 'FF0000');
+  assert.equal(parseColor('아무색'), '');
+  assert.equal(parseColor(null), '');
+});
+
+test('2장 글씨: 기본 18pt(겹치면 그보다 작게)', () => {
+  const view = makeView({ lat: 35, lon: 127, radiusM: 50000, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL });
+  const { items } = layoutBirdSlide(view, { sites: [{ name: '가', count: 5, distance: 3000, point: [126.6, 35.3] }], pointName: '나주' });
+  assert.deepEqual([...new Set(items.filter(i => i.text).map(i => i.pt))], [18]);
 });
