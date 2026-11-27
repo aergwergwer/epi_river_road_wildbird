@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseCoordinate } from '../src/pipeline.js';
-import { surveySites, applyCounts, norm } from '../src/birds.js';
+import { surveySites, applyCounts, norm, viewportAnchor } from '../src/birds.js';
 import { searchVworld, searchNominatim, searchAddress } from '../src/geocode.js';
 import { textWidth } from '../src/render.js';
-import { MAP1, MAP2, SIGN, layoutWaterSlide, layoutBirdSlide, kmText, meterText, roadLabel } from '../src/layout.js';
+import { MAP1, MAP2, RADIUS_FILL, SIGN, layoutWaterSlide, layoutBirdSlide, kmText, meterText, roadLabel } from '../src/layout.js';
 import { routeName } from '../src/analysis.js';
 import { makeView } from '../src/view.js';
 import { tilePlan, tileUrls, MAX_TILES } from '../src/basemap.js';
@@ -23,25 +23,42 @@ test('좌표 입력: 정상 값, 빈 값, 위도·경도를 바꿔 쓴 값', () 
   assert.throws(() => parseCoordinate('0', '0'), /대한민국 범위/);
 });
 
-test('조사구역: 이름으로 id를 잇고 거리순 정렬, 반경 밖은 제외', () => {
+const birdBox = (lat, lon, radiusM) => makeView({ lat, lon, radiusM, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL }).bbox;
+
+test('조사구역: 지도 범위에 걸치는 구역을 모두 거리순으로, 반경 밖이라도 지도에 보이면 포함', () => {
   const first = boundaries.features[0];
   const areas = [{ area_sno: 11, area_nm: first.properties.name }, { area_sno: 12, area_nm: '다른곳' }];
   const ring = first.geometry.coordinates.flat(1)[0];
   const [lon, lat] = ring[0];
-  const sites = surveySites(boundaries, areas, lat, lon, 20000);
+  const sites = surveySites(boundaries, areas, lat, lon, birdBox(lat, lon, 20000));
   assert.ok(sites.length >= 1);
   for (let i = 1; i < sites.length; i++) assert.ok(sites[i - 1].distance <= sites[i].distance);
   const own = sites.find(s => s.name === first.properties.name);
   assert.equal(own.nibrId, 11);
   assert.ok(own.distance < 1, '경계 위의 점은 거리가 0에 가깝다');
-  assert.equal(surveySites(boundaries, areas, 33.0, 124.5, 5000).length, 0);
+  const box = birdBox(lat, lon, 20000);
+  for (const s of sites) assert.ok(s.point[0] >= box[0] - 1e-9 && s.point[0] <= box[2] + 1e-9 && s.point[1] >= box[1] - 1e-9 && s.point[1] <= box[3] + 1e-9, '라벨 기준점은 지도 범위 안');
+  // 반경(20km)보다 먼 구역도 지도 범위(직사각형)에 걸치면 들어온다
+  assert.ok(sites.some(s => s.distance > 20000) || sites.length >= 1);
+  assert.equal(surveySites(boundaries, areas, 33.0, 124.5, birdBox(33.0, 124.5, 5000)).length, 0);
+  // 반경을 키우면 구역이 같거나 더 많아진다
+  assert.ok(surveySites(boundaries, areas, lat, lon, birdBox(lat, lon, 50000)).length >= sites.length);
+});
+
+test('라벨 기준점: 범위를 지나는 경계선 위의 점, 범위 밖이면 null', () => {
+  const square = { type: 'Polygon', coordinates: [[[127, 37], [127.1, 37], [127.1, 37.1], [127, 37.1], [127, 37]]] };
+  const anchor = viewportAnchor(square, [126.9, 36.9, 127.05, 37.05]);
+  assert.ok(anchor[0] >= 126.9 && anchor[0] <= 127.05 && anchor[1] >= 36.9 && anchor[1] <= 37.05);
+  assert.equal(viewportAnchor(square, [128, 38, 128.1, 38.1]), null);
+  // 지도 범위가 구역 안에 통째로 들어가면 지도 한가운데
+  assert.deepEqual(viewportAnchor(square, [127.02, 37.02, 127.04, 37.04]), [127.03, 37.03]);
 });
 
 test('조사구역: 같은 이름이 둘 이상이면 연결하지 않는다', () => {
   const first = boundaries.features[0];
   const areas = [{ area_sno: 1, area_nm: first.properties.name }, { area_sno: 2, area_nm: first.properties.name }];
   const [lon, lat] = first.geometry.coordinates.flat(1)[0][0];
-  const own = surveySites(boundaries, areas, lat, lon, 1000).find(s => s.name === first.properties.name);
+  const own = surveySites(boundaries, areas, lat, lon, birdBox(lat, lon, 1000)).find(s => s.name === first.properties.name);
   assert.equal(own.nibrId, null);
   assert.match(own.reason, /동명/);
 });
@@ -166,7 +183,22 @@ test('2장 배치: 개체수·거리 칸이 겹치지 않고 지도 안에 들�
   assert.ok(textWidth('한글', 20) > textWidth('ab', 20));
 });
 
-test('지도 범위: 반경 원이 화면 짧은 변의 80%를 차지한다', () => {
+test('2장 배치: 조사구역이 아주 많아도 하나도 빼지 않고 모두 올린다', () => {
+  const view = makeView({ lat: 35, lon: 127, radiusM: 50000, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL });
+  const sites = Array.from({ length: 42 }, (_, i) => ({
+    name: '조사구역' + i, count: i % 7 === 0 ? null : 100 * i + 5, distance: 500 + i * 1300,
+    point: [127 + Math.cos(i * 0.9) * 0.05 * (1 + (i % 9) * 0.45), 35 + Math.sin(i * 0.9) * 0.04 * (1 + (i % 9) * 0.45)],
+  }));
+  const { items, scale, overflow } = layoutBirdSlide(view, { sites, pointName: '나주' });
+  assert.equal(items.filter(i => i.name.startsWith('도래지')).length, 42, '전부 올라가야 한다');
+  assert.equal(overflow, 0, '겹침 없이 앉아야 한다');
+  assert.ok(scale < 1 && scale >= 0.42, '많으면 글자를 줄인다: ' + scale);
+  for (const item of items) assert.ok(insideMap(item, MAP2), JSON.stringify(item));
+  const sparse = layoutBirdSlide(view, { sites: sites.slice(0, 5), pointName: '나주' });
+  assert.equal(sparse.scale, 1, '적으면 원본 크기(22pt)를 유지한다');
+});
+
+test('지도 범위: 반경 원이 화면 짧은 변의 80%를 차지한다(fill 지정 시)', () => {
   const view = makeView({ lat: 36, lon: 128, radiusM: 3000, width: 1920, height: 1080, fill: 0.8 });
   const [x] = view.toPx(128, 36), [x2] = view.toPx(...[128 + 3000 / (111320 * Math.cos(36 * Math.PI / 180)), 36]);
   assert.ok(Math.abs((x2 - x) * 2 - 0.8 * 1080) < 6, String((x2 - x) * 2));

@@ -157,7 +157,7 @@ function fillRows(body, rows) {
   body.replaceChildren();
   if (!rows.length) {
     const cell = body.insertRow().insertCell();
-    cell.colSpan = 4;
+    cell.colSpan = body.parentElement.tHead.rows[0].cells.length;
     cell.textContent = '반경 안에 해당 없음';
     return;
   }
@@ -204,9 +204,9 @@ async function run() {
       canvas.getContext('2d').drawImage(source, 0, 0);
     }
     const w = rendered.water, b = rendered.bird;
-    fillRows($('waterRows'), w.rivers.map((r, i) => [i + 1, r.name, r.grade, r.inside ? '구역 안' : fmtMeters(r.distance)]).concat(w.more ? [['', `외 ${w.more}건`, '', '']] : []));
-    fillRows($('roadRows'), w.roads.map(r => [r.name, r.kind, fmtMeters(r.distance)]).concat(w.moreRoads ? [[`외 ${w.moreRoads}개 노선`, '', '']] : []));
-    fillRows($('birdRows'), b.sites.map((s, i) => [i + 1, s.name, fmtKm(s.distance), fmtCount(s.count)]).concat(b.more ? [['', `외 ${b.more}곳`, '', '']] : []));
+    fillRows($('waterRows'), w.rivers.map((r, i) => [i + 1, r.name, r.grade, w.labeled.has(r) ? '○' : '', r.inside ? '구역 안' : fmtMeters(r.distance)]));
+    fillRows($('roadRows'), w.roads.map(r => [r.name, r.kind, w.signed.has(r) ? '○' : '', fmtMeters(r.distance)]));
+    fillRows($('birdRows'), b.sites.map((s, i) => [i + 1, s.name, fmtKm(s.distance), fmtCount(s.count)]));
     $('birdCaption').textContent = b.countsError ? `철새도래지 · ${b.monthLabel} · 개체수 조회 실패` : `철새도래지 · ${b.monthLabel} · 합계 ${b.total.toLocaleString('ko-KR')}개체`;
     $('results').hidden = false;
     const notes = [`하천·호수 ${data.waters.length}건, 국도·지방도 ${data.routes.length}개 노선, 철새 조사구역 ${data.sites.length}곳을 찾았습니다.`];

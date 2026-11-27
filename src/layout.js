@@ -7,6 +7,8 @@ export const FACE = '맑은 고딕';
 // 1장은 슬라이드 전체가 지도, 2장은 위아래 0.174인치를 비운 지도(top = 지도 윗변의 슬라이드 y, 인치).
 export const MAP1 = { width: 1920, height: 1080, top: 0 };
 export const MAP2 = { width: 1920, height: 1030, top: 0.174 };
+// 원본 웹앱과 같은 지도 크기: 조회 반경 원이 지도 높이의 약 95.8%(원본은 반경 345px / 반높이 360px)를 차지한다.
+export const RADIUS_FILL = 345 / 360;
 
 const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && a.x + a.w + gap > b.x && a.y < b.y + b.h + gap && a.y + a.h + gap > b.y;
 const within = (box, W, H, edge) => box.x >= edge && box.y >= edge && box.x + box.w <= W - edge && box.y + box.h <= H - edge;
@@ -35,7 +37,7 @@ export const SIGN = {
  * waters/routes는 거리순 전체 목록이다. 하천 말풍선은 거리 구간(1·1.5·3·5km)마다 최대 2개,
  * 10만㎡ 이상 호수·저수지는 항상 붙인다.
  */
-export function layoutWaterSlide(view, { waters, routes, pointName, credit, maxRoads = 6 }) {
+export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName, credit, maxRoads = 6 }) {
   const W = view.width, H = view.height;
   const items = [], taken = [], signs = [];
   const [cx, cy] = view.toPx(view.lon, view.lat);
@@ -91,7 +93,7 @@ export function layoutWaterSlide(view, { waters, routes, pointName, credit, maxR
   }
 
   // 하천·호수 말풍선: 거리(노랑) + 이름(하늘색).
-  const counts = new Map(), shown = new Set(), withBubble = new Set();
+  const counts = new Map(), shown = new Set(), withBubble = new Set(), bubbled = [];
   const gaps = [12, 35, 65, 100, 145].map(g => g * 1.5);
   const dirs = [[1, 0], [-1, 0], [0, -1], [0, 1], [1, -1], [-1, -1], [1, 1], [-1, 1]];
   for (const row of [...waters].sort(byPriority)) {
@@ -114,71 +116,130 @@ export function layoutWaterSlide(view, { waters, routes, pointName, credit, maxR
     if (!pos) continue;
     if (!mandatory) counts.set(band, (counts.get(band) || 0) + 1);
     shown.add(identity);
-    withBubble.add(row.name);
+    if (row.kind !== 'lake') withBubble.add(row.name);
+    bubbled.push(row);
     keep(pos);
     const distW = 123;
     items.push({ name: `${row.name} 거리`, shape: 'roundRect', x: pos.x + (w - distW) / 2, y: pos.y, w: distW, h: distH, fill: 'FFF200', line: { color: '12212A', pt: 1.4 }, text: meterText(row), color: '000000', pt: 13, bold: true });
     items.push({ name: `${row.name} 하천명`, shape: 'roundRect', x: pos.x, y: pos.y + distH, w, h: nameH, fill: '00E6EE', line: { color: '12212A', pt: 1.4 }, text: row.name, color: '000000', pt: 15, bold: true });
   }
 
-  // 말풍선이 없는 하천은 이름만 반투명 흰 글상자로 붙인다.
-  let tags = 0;
-  for (const row of waters) {
-    if (tags >= 6) break;
-    if (row.kind === 'lake' || withBubble.has(row.name) || row.name === '이름 미상') continue;
-    const [ax, ay] = view.toPx(...row.point);
-    const w = 12 + 25 * [...row.name].length, h = 30;
-    const box = [[0, 0], [0, -1], [0, 1], [1, 0], [-1, 0]].map(([dx, dy]) => ({ x: ax - w / 2 + dx * (w + 4), y: ay - h / 2 + dy * (h + 4), w, h }))
-      .find(b => within(b, W, H, 4) && free(b, 2));
+  // 거리 말풍선이 없는 하천은 이름만 반투명 흰 글상자로 하천 위에 붙인다(원본 방식: 화면에 보이는 모든 이름 있는 하천).
+  const tagBoxes = [];
+  const overlapsAny = box => taken.some(t => overlaps(box, t, 3)) || tagBoxes.some(t => overlaps(box, t, 3));
+  for (const river of visibleRiverNames(view, rivers).sort((a, b) => [...b.name].length - [...a.name].length)) {
+    if (withBubble.has(river.name)) continue;
+    const w = Math.max(57, [...river.name].length * 22.5 + 18), h = 30;
+    const at = dy => ({ x: Math.max(6, Math.min(W - w - 6, river.x - w / 2)), y: Math.max(6, Math.min(H - h - 6, river.y - h / 2 + dy)), w, h });
+    const offsets = [0, -24, 24, -48, 48, -72, 72, -96, 96].map(v => v * 1.5);
+    let box = offsets.map(at).find(b => !overlapsAny(b));
+    if (!box) {
+      let nearest = Infinity;
+      for (let top = 6; top + h <= H - 6; top += 18) for (let left = 6; left + w <= W - 6; left += 27) {
+        const candidate = { x: left, y: top, w, h }, d = (left - river.x) ** 2 + (top - river.y) ** 2;
+        if (d < nearest && !overlapsAny(candidate)) { nearest = d; box = candidate; }
+      }
+    }
     if (!box) continue;
-    keep(box);
-    withBubble.add(row.name);
-    tags++;
-    items.push({ name: `${row.name} 이름`, shape: 'rect', ...box, fill: 'FFFFFF', opacity: 0.875, text: row.name, color: '142B3E', pt: 10.5, bold: true });
+    tagBoxes.push(box);
+    items.push({ name: `${river.name} 이름`, shape: 'rect', ...box, fill: 'FFFFFF', opacity: 0.875, text: river.name, color: '142B3E', pt: 10.5, bold: true });
   }
-  return { signs, items };
+  return { signs, items, bubbled, signed: placedSigns.map(p => p.route) };
+}
+
+/**
+ * 화면에 보이는 이름 있는 하천마다 가장 길게 보이는 선분의 가운데를 돌려준다(하천 코드 기준, 타일 클리핑 변은 제외).
+ */
+function visibleRiverNames(view, rivers) {
+  const W = view.width, H = view.height, names = new Map();
+  for (const river of rivers) {
+    if (!river.name || river.kind === 'lake' || !river.polys) continue;
+    if (river.bbox && (river.bbox[2] < view.bbox[0] || river.bbox[0] > view.bbox[2] || river.bbox[3] < view.bbox[1] || river.bbox[1] > view.bbox[3])) continue;
+    const key = river.code || river.name;
+    for (const polygon of river.polys) for (const ring of polygon) {
+      let px = null;
+      for (let i = 0, edge = 0; i + 3 < ring.xy.length; i += 2, edge++) {
+        const a = px || view.toPx(ring.xy[i], ring.xy[i + 1]), b = view.toPx(ring.xy[i + 2], ring.xy[i + 3]);
+        px = b;
+        if (ring.art && ring.art[edge]) continue;
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        let start = 0, end = 1;
+        for (const [p, q] of [[-dx, a[0]], [dx, W - a[0]], [-dy, a[1]], [dy, H - a[1]]]) {
+          if (p < 0) start = Math.max(start, q / p);
+          else if (p > 0) end = Math.min(end, q / p);
+          else if (q < 0) end = -1;
+        }
+        const length = (end - start) * Math.hypot(dx, dy);
+        if (length > (names.get(key)?.length || 0)) {
+          const t = (start + end) / 2;
+          names.set(key, { name: river.name, x: a[0] + t * dx, y: a[1] + t * dy, length });
+        }
+      }
+    }
+  }
+  return [...names.values()];
 }
 
 // ---- 슬라이드 2: 철새도래지 ----
 export const siteText = site => `${site.name} ${site.count === null ? '자료 없음' : site.count.toLocaleString('ko-KR') + '수'}`;
 
-/** 2장 배치: 도래지 이름·개체수(회색 칸, 파란 글씨)와 구역 경계까지의 거리(하늘색 칸). */
+/**
+ * 2장 배치: 도래지 이름·개체수(회색 칸, 파란 글씨)와 구역 경계까지의 거리(하늘색 칸).
+ * 지도 범위 안의 조사구역을 하나도 빼지 않고 모두 올린다. 한 번에 다 못 앉으면 칸과 글자를 단계적으로 줄여 다시 배치한다.
+ * site.point는 지도 범위 안에 있는 구역 경계 위의 한 점(라벨 기준점)이다.
+ */
 export function layoutBirdSlide(view, { sites, pointName }) {
   const W = view.width, H = view.height, inch = PPI;
-  const items = [], taken = [];
   const [cx, cy] = view.toPx(view.lon, view.lat);
-  items.push({ name: '조회 지점', shape: 'ellipse', x: cx - 14.5, y: cy - 14.5, w: 29, h: 29, fill: 'FFFF00', line: { color: 'FF0000', pt: 2.25 } });
-  taken.push({ x: cx - 20, y: cy - 20, w: 40, h: 40 });
+  const fixed = [{ name: '조회 지점', shape: 'ellipse', x: cx - 14.5, y: cy - 14.5, w: 29, h: 29, fill: 'FFFF00', line: { color: 'FF0000', pt: 2.25 } }];
+  const fixedTaken = [{ x: cx - 20, y: cy - 20, w: 40, h: 40 }];
   if (pointName) {
     const w = Math.min(7 * inch, Math.max(1.65 * inch, textWidth(pointName, 40) + 40)), h = 0.5 * inch;
     const box = { x: clampBox(cx + 0.18 * inch, w, W, 6), y: clampBox(cy - 0.3 * inch, h, H, 6), w, h };
-    taken.push(box);
-    items.push({ name: '조회 지점 이름 (편집 가능)', shape: 'rect', ...box, fill: 'FF0000', text: pointName, color: 'FFFFFF', pt: 20, bold: true, face: FACE });
+    fixedTaken.push(box);
+    fixed.push({ name: '조회 지점 이름 (편집 가능)', shape: 'rect', ...box, fill: 'FF0000', text: pointName, color: 'FFFFFF', pt: 20, bold: true, face: FACE });
   }
-  for (const site of sites) {
-    const [px, py] = view.toPx(...site.point);
-    if (px < 0 || px > W || py < 0 || py > H) continue;
-    const text = siteText(site), distance = kmText(site.distance);
-    const w = Math.min(5, Math.max(1.8, units(text) * 22 / 72 + 0.18)) * inch, distH = 0.31 * inch, nameH = 0.44 * inch, h = distH + nameH;
-    const candidates = [[px - w / 2, py + 0.12 * inch], [px - w / 2, py - h - 0.12 * inch], [px + 0.15 * inch, py - h / 2], [px - w - 0.15 * inch, py - h / 2]];
-    for (let i = 1; i <= 8; i++) candidates.push([px - w / 2 + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.25 * inch, py + (i % 2 ? 0.2 : -0.3) * i * inch]);
-    const fit = ([x, y]) => ({ x: clampBox(x, w, W, 6), y: clampBox(y, h, H, 6), w, h });
-    const boxes = candidates.map(fit);
-    const open = b => !taken.some(t => overlaps(b, t, 0.08 * inch));
-    let box = boxes.find(open);
-    if (!box) { // 후보가 모두 막히면 가장 가까운 빈자리를 찾는다. 그래도 없으면 첫 후보를 쓴다.
-      let nearest = Infinity;
-      for (let top = 6; top + h <= H - 6; top += 14) for (let left = 6; left + w <= W - 6; left += 14) {
-        const d = (left + w / 2 - px) ** 2 + (top + h / 2 - py) ** 2, candidate = { x: left, y: top, w, h };
-        if (d < nearest && open(candidate)) { nearest = d; box = candidate; }
+
+  const attempt = scale => {
+    const taken = [...fixedTaken], placed = [];
+    let overflow = 0;
+    for (const site of sites) {
+      const [px, py] = view.toPx(...site.point);
+      if (px < -2 || px > W + 2 || py < -2 || py > H + 2) continue;
+      const text = siteText(site), distance = kmText(site.distance);
+      const w = Math.min(5, Math.max(1.8, units(text) * 22 / 72 + 0.18)) * inch * scale, distH = 0.31 * inch * scale, nameH = 0.44 * inch * scale, h = distH + nameH;
+      const g = scale, candidates = [[px - w / 2, py + 0.12 * inch * g], [px - w / 2, py - h - 0.12 * inch * g], [px + 0.15 * inch * g, py - h / 2], [px - w - 0.15 * inch * g, py - h / 2]];
+      for (let i = 1; i <= 8; i++) candidates.push([px - w / 2 + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.25 * inch * g, py + (i % 2 ? 0.2 : -0.3) * i * inch * g]);
+      const boxes = candidates.map(([x, y]) => ({ x: clampBox(x, w, W, 6), y: clampBox(y, h, H, 6), w, h }));
+      const open = b => !taken.some(t => overlaps(b, t, 0.08 * inch * g));
+      let box = boxes.find(open);
+      if (!box) { // 후보가 모두 막히면 가장 가까운 빈자리를 찾는다.
+        let nearest = Infinity;
+        for (let top = 6; top + h <= H - 6; top += 16) for (let left = 6; left + w <= W - 6; left += 16) {
+          const d = (left + w / 2 - px) ** 2 + (top + h / 2 - py) ** 2, candidate = { x: left, y: top, w, h };
+          if (d < nearest && open(candidate)) { nearest = d; box = candidate; }
+        }
       }
+      if (!box) { box = boxes[0]; overflow++; }
+      taken.push(box);
+      placed.push({ site, text, distance, box, distH, nameH, w });
     }
-    box ||= boxes[0];
-    taken.push(box);
-    items.push({ name: '도래지 이름·개체수 (편집 가능)', shape: 'rect', x: box.x, y: box.y + distH, w, h: nameH, fill: 'EDEDED', line: { color: '0000FF', pt: 1 }, text, color: '0000FF', pt: 22, bold: true, face: FACE });
-    items.push({ name: '구역 경계 최단거리 (편집 가능)', shape: 'rect', x: box.x + 0.05 * inch, y: box.y, w: Math.max(0.62, distance.length * 0.18) * inch, h: distH, fill: '00B0F0', text: distance, color: '000000', pt: 20, bold: true, face: FACE });
+    return { placed, overflow };
+  };
+  // 글자 크기 22pt(원본)부터 시작해 모두 겹침 없이 앉을 때까지 줄인다.
+  let scale = 1, result = attempt(scale);
+  for (const next of [0.9, 0.8, 0.7, 0.62, 0.55, 0.48, 0.42]) {
+    if (!result.overflow) break;
+    scale = next;
+    result = attempt(scale);
   }
-  return { items };
+  const items = [...fixed];
+  const pt = size => Math.max(8, Math.round(size * scale * 2) / 2);
+  for (const { site, text, distance, box, distH, nameH, w } of result.placed) {
+    items.push({ name: '도래지 이름·개체수 (편집 가능)', shape: 'rect', x: box.x, y: box.y + distH, w, h: nameH, fill: 'EDEDED', line: { color: '0000FF', pt: 1 }, text, color: '0000FF', pt: pt(22), bold: true, face: FACE });
+    items.push({ name: '구역 경계 최단거리 (편집 가능)', shape: 'rect', x: box.x + 0.05 * inch * scale, y: box.y, w: Math.max(0.62, distance.length * 0.18) * inch * scale, h: distH, fill: '00B0F0', text: distance, color: '000000', pt: pt(20), bold: true, face: FACE });
+  }
+  return { items, scale, overflow: result.overflow };
 }
 
 /** 미리보기용: PPTX 도형과 같은 모양으로 캔버스에 그린다. */
