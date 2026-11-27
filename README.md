@@ -25,6 +25,7 @@
 - Git 연동: 빌드 명령 없음, 출력 디렉터리 `/`.
 - 또는 Direct Upload로 이 폴더의 내용을 올립니다.
 - `_worker.js`는 `/api/*`만 처리합니다(`_routes.json`). 나머지는 정적 파일입니다.
+- Cloudflare가 Workers 방식(Workers Builds)으로 연결하는 경우에는 `wrangler.jsonc`가 설정을 담당합니다: `_worker.js`를 진입점으로, 저장소 루트를 정적 파일(`.assetsignore`로 소스·테스트 제외)로 올리고 `/api/*`만 워커가 먼저 처리합니다. 배포 명령은 `npx wrangler deploy`입니다.
 
 브이월드 키를 쓰려면 배포된 주소를 키의 허용 URL에 등록하세요. Earth Engine은 Cloud 프로젝트 ID와 OAuth 웹 클라이언트 ID(승인된 JavaScript 원본에 배포 주소)가 필요하며, 클라이언트 보안 비밀번호나 서비스 계정 키는 입력하지 않습니다.
 
