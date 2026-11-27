@@ -5,8 +5,8 @@ import { measureWaters, measureRoads } from './analysis.js';
 import { surveySites, applyCounts, monthText } from './birds.js';
 import { groupGis, gisInside } from './gis.js';
 import { drawBackground } from './basemap.js';
-import { MAP1, MAP2, RADIUS_FILL, SIGN, layoutWaterSlide, layoutBirdSlide, drawItems } from './layout.js';
-import { FONT, drawWaterRoadScene, drawBirdScene, drawGisDots, drawRoadSigns } from './render.js';
+import { MAP1, MAP2, RADIUS_FILL, layoutWaterSlide, layoutBirdSlide, drawItems } from './layout.js';
+import { FONT, drawWaterRoadScene, drawBirdScene, drawGisDots } from './render.js';
 
 export const SLIDE_ROWS = { roads: 6 }; // 도로 이름표는 지도에 최대 6개 노선(나머지는 표·노트)
 
@@ -81,14 +81,13 @@ export async function renderSlides(data, { pointName, backgrounds, deps = {}, on
     out.water = { radiusM: data.waterRadiusM, rivers: data.waters, roads: data.routes, credit: bgCredit, preview, allWaters: data.waters, allRoutes: data.routes };
     // chosen이 없으면 원본 기준으로 고르고, 있으면 {waters, routes}(Set)에 든 항목만 지도에 올린다.
     out.water.relayout = (chosen = {}) => {
-      const { signs, items, bubbled, signed } = layoutWaterSlide(view, {
+      const { items, bubbled, signed } = layoutWaterSlide(view, {
         waters: data.waters, routes: data.routes, rivers: data.rivers, pointName, credit, maxRoads: SLIDE_ROWS.roads,
         chosenWaters: chosen.waters || null, chosenRoutes: chosen.routes || null,
       });
       const fctx = final.getContext('2d');
       fctx.clearRect(0, 0, final.width, final.height);
       fctx.drawImage(scene, 0, 0);
-      drawRoadSigns(fctx, signs, SIGN);
       const pctx = preview.getContext('2d');
       pctx.drawImage(final, 0, 0);
       drawItems(pctx, items, FONT);

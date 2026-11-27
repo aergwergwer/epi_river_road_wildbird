@@ -92,28 +92,6 @@ export function drawWaterRoadScene(ctx, view, { rivers, lakes, roads }) {
   }
 }
 
-/** 도로 번호 표지: 국도는 파란 타원, 지방도는 노란 사각형. signs: [{x,y,w,h,kind,number}] 왼쪽 위 기준. */
-export function drawRoadSigns(ctx, signs, specs) {
-  ctx.save();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  for (const sign of signs) {
-    const spec = specs[sign.kind];
-    ctx.beginPath();
-    if (spec.ellipse) ctx.ellipse(sign.x + sign.w / 2, sign.y + sign.h / 2, sign.w / 2, sign.h / 2, 0, 0, 2 * Math.PI);
-    else ctx.roundRect(sign.x, sign.y, sign.w, sign.h, 5);
-    ctx.fillStyle = spec.fill;
-    ctx.fill();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = spec.edge;
-    ctx.stroke();
-    ctx.fillStyle = spec.ink;
-    ctx.font = `bold 32px ${FONT}`;
-    ctx.fillText(sign.number, sign.x + sign.w / 2, sign.y + sign.h / 2 + 1, sign.w - 14);
-  }
-  ctx.restore();
-}
-
 /** 슬라이드 2 지도: 철새 조사구역 경계(투명 캔버스에 그려 따로 올린다). boundaries는 GeoJSON Feature 배열. */
 export function drawBirdScene(ctx, view, { boundaries, highlight = new Set() }) {
   ctx.lineJoin = 'round';

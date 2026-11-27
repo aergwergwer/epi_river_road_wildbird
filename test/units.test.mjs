@@ -151,7 +151,7 @@ test('1장 배치: 도로 표지·이름, 하천 말풍선(거리+이름)이 겹
   assert.ok(normal.length <= 8 && normal.length >= 4, String(normal.length));
   assert.ok(waters.filter(w => w.kind === 'lake').every(w => bubbles.some(b => b.text === w.name)), '10만㎡ 이상 호수는 항상 표시');
   for (const item of items) assert.ok(insideMap(item, MAP1), JSON.stringify(item));
-  const solid = [...items.filter(i => i.shape !== 'ellipse' || i.name !== '기준점'), ...signs];
+  const solid = items.filter(i => i.shape !== 'ellipse' || i.name !== '기준점'); // 번호 표지도 items에 들어 있다
   for (let a = 0; a < solid.length; a++) for (let b = a + 1; b < solid.length; b++) {
     const p = solid[a], q = solid[b];
     if (p.name?.endsWith(' 거리') && q.name === p.name.replace(' 거리', ' 하천명')) continue; // 같은 말풍선의 위·아래 칸
@@ -310,4 +310,18 @@ test('2장 글씨: 기본 18pt(겹치면 그보다 작게)', () => {
   const view = makeView({ lat: 35, lon: 127, radiusM: 50000, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL });
   const { items } = layoutBirdSlide(view, { sites: [{ name: '가', count: 5, distance: 3000, point: [126.6, 35.3] }], pointName: '나주' });
   assert.deepEqual([...new Set(items.filter(i => i.text).map(i => i.pt))], [18]);
+});
+
+test('1장: 도로 번호 표지는 지도에 굽지 않고 옮길 수 있는 도형으로 올라간다', () => {
+  const view = makeView({ lat: 35, lon: 127, radiusM: 3000, width: MAP1.width, height: MAP1.height, fill: RADIUS_FILL });
+  const routes = [{ name: '국도 13번', kind: '국도', number: 13, distance: 300, point: [127.004, 35.003] }, { name: '지방도 822번', kind: '지방도', number: 822, distance: 900, point: [126.99, 35.01] }];
+  const { signs, items } = layoutWaterSlide(view, { waters: [], routes });
+  const shields = items.filter(i => i.name.endsWith('번호 표지'));
+  assert.equal(shields.length, signs.length);
+  assert.equal(shields.length, 2);
+  const national = shields.find(i => i.text === '13'), local = shields.find(i => i.text === '822');
+  assert.equal(national.shape, 'ellipse');
+  assert.equal(local.shape, 'roundRect');
+  assert.notEqual(national.fill, local.fill);
+  assert.ok(items.some(i => i.text === '국도 13번') && items.some(i => i.text === '지방도 822번'), '이름표도 따로 있다');
 });

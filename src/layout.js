@@ -33,7 +33,7 @@ export const SIGN = {
 };
 
 /**
- * 1장 배치. 반환: signs(지도에 굽는 도로 표지), items(PPTX 도형).
+ * 1장 배치. 반환: signs(표지 위치 목록), items(PPTX 도형: 번호 표지·이름표·말풍선 모두 옮길 수 있다).
  * waters/routes는 거리순 전체 목록이다. 하천 말풍선은 거리 구간(1·1.5·3·5km)마다 최대 2개,
  * 10만㎡ 이상 호수·저수지는 항상 붙인다.
  */
@@ -78,6 +78,12 @@ export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName,
     keep(box);
     const sign = { ...box, kind: route.kind, number: String(route.number) };
     signs.push(sign);
+    // 번호 표지도 PPTX 도형(편집·이동 가능)으로 올린다. 지도 이미지에는 굽지 않는다.
+    items.push({
+      name: `${roadLabel(route)} 번호 표지`, shape: spec.ellipse ? 'ellipse' : 'roundRect', ...box,
+      fill: spec.fill.slice(1).toUpperCase(), line: { color: spec.edge.slice(1).toUpperCase(), pt: 1.5 },
+      text: String(route.number), color: spec.ink.slice(1).toUpperCase(), pt: 16, bold: true, face: FACE,
+    });
     placedSigns.push({ sign, route });
   }
   for (const { sign, route } of placedSigns) {
