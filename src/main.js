@@ -4,7 +4,7 @@ import { createBirdApi, monthText } from './birds.js';
 import { searchAddress, cleanKey } from './geocode.js';
 import { BACKGROUNDS, loadEarthEngineLibrary, loadSentinel } from './basemap.js';
 import { lookup, renderSlides, parseCoordinate } from './pipeline.js';
-import { buildReport, fmtMeters, fmtKm, fmtCount } from './report.js';
+import { buildReport, fmtDistance, fmtCount } from './report.js';
 
 const $ = id => document.getElementById(id);
 const birdApi = createBirdApi();
@@ -153,18 +153,74 @@ function connectEarthEngine() {
 }
 
 // ---- 조회와 미리보기 ----
-function fillRows(body, rows) {
+/**
+ * 세 표(하천·호수 / 국도·지방도 / 철새도래지)는 같은 형식이다: 체크 | 번호 | 이름 | 구분 | 거리 | 비고.
+ * rows: [{item, name, kind, distance, note}], checked: 처음 체크할 항목 Set, onChange(체크된 항목 Set)
+ */
+function fillTable(table, rows, checked, onChange) {
+  const body = table.tBodies[0], all = table.querySelector('input.all');
   body.replaceChildren();
+  const boxes = [];
+  const update = () => {
+    const on = new Set(boxes.filter(box => box.checked).map(box => box.item));
+    boxes.forEach(box => box.closest('tr').classList.toggle('off', !box.checked));
+    all.checked = boxes.length > 0 && on.size === boxes.length;
+    all.indeterminate = on.size > 0 && on.size < boxes.length;
+    table.querySelector('.cap').textContent = `· 지도 표시 ${on.size} / ${boxes.length}`;
+    return on;
+  };
+  rows.forEach((row, i) => {
+    const tr = body.insertRow();
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.item = row.item;
+    box.checked = checked.has(row.item);
+    box.setAttribute('aria-label', row.name + ' 지도 표시');
+    box.onchange = () => onChange(update());
+    boxes.push(box);
+    tr.insertCell().append(box);
+    tr.cells[0].className = 'chk';
+    for (const value of [i + 1, row.name, row.kind, row.distance, row.note || '']) tr.insertCell().textContent = value;
+  });
   if (!rows.length) {
     const cell = body.insertRow().insertCell();
-    cell.colSpan = body.parentElement.tHead.rows[0].cells.length;
-    cell.textContent = '반경 안에 해당 없음';
-    return;
+    cell.colSpan = 6;
+    cell.textContent = '해당 없음';
   }
-  for (const values of rows) {
-    const row = body.insertRow();
-    for (const value of values) row.insertCell().textContent = value;
+  all.disabled = !rows.length;
+  all.onchange = () => { boxes.forEach(box => { box.checked = all.checked; }); onChange(update()); };
+  update();
+}
+
+function showPreviews() {
+  const { rendered } = last;
+  for (const [id, source] of [['preview1', rendered.water.preview], ['preview2', rendered.bird.preview]]) {
+    const canvas = $(id);
+    canvas.width = source.width;
+    canvas.height = source.height;
+    canvas.getContext('2d').drawImage(source, 0, 0);
   }
+}
+
+function birdCaption() {
+  const b = last.rendered.bird;
+  $('birdTable').querySelector('caption').firstChild.textContent = (b.countsError ? `철새도래지 · ${b.monthLabel} · 개체수 조회 실패 ` : `철새도래지 · ${b.monthLabel} · 표시 구역 합계 ${b.total.toLocaleString('ko-KR')}개체 `);
+}
+
+function buildTables() {
+  const { rendered } = last, w = rendered.water, b = rendered.bird;
+  const selected = { waters: new Set(w.labeled), routes: new Set(w.signed) };
+  const redrawWater = () => { w.relayout(selected); showPreviews(); };
+  fillTable($('waterTable'), w.rivers.map(r => ({
+    item: r, name: r.name, kind: r.grade, distance: r.inside ? '구역 안' : fmtDistance(r.distance),
+    note: r.grade === '호수·저수지' && r.area ? `면적 ${Math.round(r.area).toLocaleString('ko-KR')}㎡` : '',
+  })), selected.waters, on => { selected.waters = on; redrawWater(); });
+  fillTable($('roadTable'), w.roads.map(r => ({ item: r, name: r.name, kind: r.kind, distance: fmtDistance(r.distance) })), selected.routes, on => { selected.routes = on; redrawWater(); });
+  fillTable($('birdTable'), b.sites.map(s => ({
+    item: s, name: s.name, kind: '철새도래지', distance: fmtDistance(s.distance),
+    note: s.count === null ? `개체수 ${fmtCount(s.count)}` : `개체수 ${s.count.toLocaleString('ko-KR')}`,
+  })), new Set(b.labeled), on => { b.relayout(on); birdCaption(); showPreviews(); });
+  birdCaption();
 }
 
 async function run() {
@@ -197,17 +253,8 @@ async function run() {
       onStatus: text => setStatus(text),
     });
     last = { data, rendered, pointName };
-    for (const [id, source] of [['preview1', rendered.water.preview], ['preview2', rendered.bird.preview]]) {
-      const canvas = $(id);
-      canvas.width = source.width;
-      canvas.height = source.height;
-      canvas.getContext('2d').drawImage(source, 0, 0);
-    }
-    const w = rendered.water, b = rendered.bird;
-    fillRows($('waterRows'), w.rivers.map((r, i) => [i + 1, r.name, r.grade, w.labeled.has(r) ? '○' : '', r.inside ? '구역 안' : fmtMeters(r.distance)]));
-    fillRows($('roadRows'), w.roads.map(r => [r.name, r.kind, w.signed.has(r) ? '○' : '', fmtMeters(r.distance)]));
-    fillRows($('birdRows'), b.sites.map((s, i) => [i + 1, s.name, fmtKm(s.distance), fmtCount(s.count)]));
-    $('birdCaption').textContent = b.countsError ? `철새도래지 · ${b.monthLabel} · 개체수 조회 실패` : `철새도래지 · ${b.monthLabel} · 합계 ${b.total.toLocaleString('ko-KR')}개체`;
+    showPreviews();
+    buildTables();
     $('results').hidden = false;
     const notes = [`하천·호수 ${data.waters.length}건, 국도·지방도 ${data.routes.length}개 노선, 철새 조사구역 ${data.sites.length}곳을 찾았습니다.`];
     if (data.countsError) notes.push('철새 개체수를 가져오지 못해 "자료 없음"으로 표시했습니다: ' + data.countsError);

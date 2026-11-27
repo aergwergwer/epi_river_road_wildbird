@@ -37,7 +37,8 @@ export const SIGN = {
  * waters/routes는 거리순 전체 목록이다. 하천 말풍선은 거리 구간(1·1.5·3·5km)마다 최대 2개,
  * 10만㎡ 이상 호수·저수지는 항상 붙인다.
  */
-export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName, credit, maxRoads = 6 }) {
+// chosenWaters / chosenRoutes: 사용자가 체크한 항목(Set). 없으면 원본 기준(거리 구간별 2곳 등)으로 고른다.
+export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName, credit, maxRoads = 6, chosenWaters = null, chosenRoutes = null }) {
   const W = view.width, H = view.height;
   const items = [], taken = [], signs = [];
   const [cx, cy] = view.toPx(view.lon, view.lat);
@@ -63,7 +64,7 @@ export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName,
   }
 
   // 도로: 번호 표지는 도로 위(가장 가까운 점)에, 이름표(예: 국도 16번)는 표지 옆에 둔다.
-  const shownRoutes = routes.slice(0, maxRoads);
+  const shownRoutes = chosenRoutes ? routes.filter(r => chosenRoutes.has(r)) : routes.slice(0, maxRoads);
   const placedSigns = [];
   for (const route of shownRoutes) {
     const [x, y] = view.toPx(...route.point);
@@ -96,9 +97,11 @@ export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName,
   const counts = new Map(), shown = new Set(), withBubble = new Set(), bubbled = [];
   const gaps = [12, 35, 65, 100, 145].map(g => g * 1.5);
   const dirs = [[1, 0], [-1, 0], [0, -1], [0, 1], [1, -1], [-1, -1], [1, 1], [-1, 1]];
-  for (const row of [...waters].sort(byPriority)) {
-    const band = labelBand(row.distance), mandatory = bigLake(row), identity = row.grade + ':' + row.name;
-    if (!band || (!mandatory && ((counts.get(band) || 0) >= 2 || shown.has(identity)))) continue;
+  const pool = chosenWaters ? waters.filter(r => chosenWaters.has(r)) : waters;
+  for (const row of [...pool].sort(byPriority)) {
+    const band = labelBand(row.distance), identity = row.grade + ':' + row.name;
+    const mandatory = chosenWaters ? true : bigLake(row); // 체크한 항목은 빠뜨리지 않는다
+    if (!chosenWaters && (!band || (!mandatory && ((counts.get(band) || 0) >= 2 || shown.has(identity))))) continue;
     const [ax, ay] = view.toPx(...row.point);
     const w = Math.max(147, 33 + [...row.name].length * 28.5), nameH = 48, distH = 36, h = nameH + distH;
     const candidates = [];
@@ -114,7 +117,7 @@ export function layoutWaterSlide(view, { waters, routes, rivers = [], pointName,
       }
     }
     if (!pos) continue;
-    if (!mandatory) counts.set(band, (counts.get(band) || 0) + 1);
+    if (!mandatory && band) counts.set(band, (counts.get(band) || 0) + 1);
     shown.add(identity);
     if (row.kind !== 'lake') withBubble.add(row.name);
     bubbled.push(row);
@@ -195,49 +198,65 @@ export function layoutBirdSlide(view, { sites, pointName }) {
   const fixedTaken = [{ x: cx - 20, y: cy - 20, w: 40, h: 40 }];
   if (pointName) {
     const w = Math.min(7 * inch, Math.max(1.65 * inch, textWidth(pointName, 40) + 40)), h = 0.5 * inch;
-    const box = { x: clampBox(cx + 0.18 * inch, w, W, 6), y: clampBox(cy - 0.3 * inch, h, H, 6), w, h };
+    // 기본은 기준점 오른쪽(원본 위치). 도래지 경계점이 그 칸 안에 걸리면 다른 쪽(왼쪽·위·아래)으로 옮긴다.
+    const anchors = sites.map(site => view.toPx(...site.point));
+    const spots = [[cx + 0.18 * inch, cy - 0.3 * inch], [cx - 0.18 * inch - w, cy - 0.3 * inch], [cx - w / 2, cy - 0.3 * inch - 0.7 * inch], [cx - w / 2, cy + 0.45 * inch]];
+    const boxes = spots.map(([x, y]) => ({ x: clampBox(x, w, W, 6), y: clampBox(y, h, H, 6), w, h }));
+    const hit = b => anchors.filter(([ax, ay]) => ax > b.x - 12 && ax < b.x + b.w + 12 && ay > b.y - 12 && ay < b.y + b.h + 12).length;
+    const box = boxes.find(b => hit(b) === 0) || boxes.reduce((best, b) => (hit(b) < hit(best) ? b : best), boxes[0]);
     fixedTaken.push(box);
     fixed.push({ name: '조회 지점 이름 (편집 가능)', shape: 'rect', ...box, fill: 'FF0000', text: pointName, color: 'FFFFFF', pt: 20, bold: true, face: FACE });
   }
 
-  const attempt = scale => {
-    const taken = [...fixedTaken], placed = [];
+  // 칸은 도래지 경계점 바로 아래에 둔다. 겹치면 위치를 옮기지 않고 글자·칸을 줄이며(반쯤 줄어든 뒤에도 겹칠 때만
+  // 경계점에 붙은 위·오른쪽·왼쪽 자리를 쓴다), 칸이 경계점에서 멀리 떨어지는 일은 없다.
+  const attempt = (scale, { adjacent = false, perSite = false, strictFixed = false, floor = 0.12 } = {}) => {
+    const taken = [], placed = []; // taken: 이미 놓인 도래지 칸. 기준점 표시·이름은 가능하면 피하는 정도로만 본다(피할 수 없으면 겹쳐도 다른 칸을 키우지 않는다).
     let overflow = 0;
     for (const site of sites) {
       const [px, py] = view.toPx(...site.point);
       if (px < -2 || px > W + 2 || py < -2 || py > H + 2) continue;
       const text = siteText(site), distance = kmText(site.distance);
-      const w = Math.min(5, Math.max(1.8, units(text) * 22 / 72 + 0.18)) * inch * scale, distH = 0.31 * inch * scale, nameH = 0.44 * inch * scale, h = distH + nameH;
-      const g = scale, candidates = [[px - w / 2, py + 0.12 * inch * g], [px - w / 2, py - h - 0.12 * inch * g], [px + 0.15 * inch * g, py - h / 2], [px - w - 0.15 * inch * g, py - h / 2]];
-      for (let i = 1; i <= 8; i++) candidates.push([px - w / 2 + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.25 * inch * g, py + (i % 2 ? 0.2 : -0.3) * i * inch * g]);
-      const boxes = candidates.map(([x, y]) => ({ x: clampBox(x, w, W, 6), y: clampBox(y, h, H, 6), w, h }));
-      const open = b => !taken.some(t => overlaps(b, t, 0.08 * inch * g));
-      let box = boxes.find(open);
-      if (!box) { // 후보가 모두 막히면 가장 가까운 빈자리를 찾는다.
-        let nearest = Infinity;
-        for (let top = 6; top + h <= H - 6; top += 16) for (let left = 6; left + w <= W - 6; left += 16) {
-          const d = (left + w / 2 - px) ** 2 + (top + h / 2 - py) ** 2, candidate = { x: left, y: top, w, h };
-          if (d < nearest && open(candidate)) { nearest = d; box = candidate; }
-        }
+      let s = scale, box, w, h, distH, nameH, open;
+      for (;;) {
+        w = Math.min(5, Math.max(1.8, units(text) * 22 / 72 + 0.18)) * inch * s;
+        distH = 0.31 * inch * s;
+        nameH = 0.44 * inch * s;
+        h = distH + nameH;
+        const g = 0.18 * inch; // 기준점 표시(원)를 비키도록 배율과 무관하게 고정
+        const spots = [[px - w / 2, py + g]];
+        if (adjacent) spots.push([px - w / 2, py - h - g], [px + g, py - h / 2], [px - w - g, py - h / 2], [px + g, py + g], [px - w - g, py + g], [px + g, py - h - g], [px - w - g, py - h - g]);
+        const boxes = spots.map(([x, y]) => ({ x: clampBox(x, w, W, 6), y: clampBox(y, h, H, 6), w, h }));
+        const gap = 0.06 * inch * s;
+        const strict = boxes.find(b => !taken.some(t => overlaps(b, t, gap)) && !fixedTaken.some(t => overlaps(b, t, gap)));
+        const soft = boxes.find(b => !taken.some(t => overlaps(b, t, gap)));
+        // 기준점 표시와만 겹치는 칸은 글자가 읽히는 정도(원래 크기의 절반)까지만 줄이고, 도래지 칸끼리 겹치면 더 줄인다.
+        const wait = strictFixed && perSite && (soft ? s * 0.9 >= Math.max(floor, 0.5 * scale) : s * 0.9 >= floor);
+        open = strict || (wait ? undefined : soft);
+        box = open || boxes[0];
+        if (open || !perSite || s * 0.9 < floor) break;
+        s *= 0.9;
       }
-      if (!box) { box = boxes[0]; overflow++; }
+      if (!open) overflow++;
       taken.push(box);
-      placed.push({ site, text, distance, box, distH, nameH, w });
+      placed.push({ site, text, distance, box, distH, nameH, w, s });
     }
     return { placed, overflow };
   };
-  // 글자 크기 22pt(원본)부터 시작해 모두 겹침 없이 앉을 때까지 줄인다.
   let scale = 1, result = attempt(scale);
-  for (const next of [0.9, 0.8, 0.7, 0.62, 0.55, 0.48, 0.42]) {
+  for (const next of [0.9, 0.8, 0.7, 0.62, 0.55, 0.5, 0.45, 0.4, 0.35, 0.3]) {
     if (!result.overflow) break;
     scale = next;
-    result = attempt(scale);
+    result = attempt(scale, { adjacent: next <= 0.5 });
   }
+  // 겹치는 칸(도래지끼리, 또는 기준점 표시·이름과)만 더 줄인다. 나머지 칸은 그대로 둔다.
+  result = attempt(scale, { adjacent: scale <= 0.5, perSite: true, strictFixed: true });
   const items = [...fixed];
-  const pt = size => Math.max(8, Math.round(size * scale * 2) / 2);
-  for (const { site, text, distance, box, distH, nameH, w } of result.placed) {
+  const ptOf = (size, k) => Math.max(4, Math.round(size * k * 2) / 2);
+  for (const { site, text, distance, box, distH, nameH, w, s: k } of result.placed) {
+    const pt = size => ptOf(size, k);
     items.push({ name: '도래지 이름·개체수 (편집 가능)', shape: 'rect', x: box.x, y: box.y + distH, w, h: nameH, fill: 'EDEDED', line: { color: '0000FF', pt: 1 }, text, color: '0000FF', pt: pt(22), bold: true, face: FACE });
-    items.push({ name: '구역 경계 최단거리 (편집 가능)', shape: 'rect', x: box.x + 0.05 * inch * scale, y: box.y, w: Math.max(0.62, distance.length * 0.18) * inch * scale, h: distH, fill: '00B0F0', text: distance, color: '000000', pt: pt(20), bold: true, face: FACE });
+    items.push({ name: '구역 경계 최단거리 (편집 가능)', shape: 'rect', x: box.x + 0.05 * inch * k, y: box.y, w: Math.max(0.62, distance.length * 0.18) * inch * k, h: distH, fill: '00B0F0', text: distance, color: '000000', pt: pt(20), bold: true, face: FACE });
   }
   return { items, scale, overflow: result.overflow };
 }

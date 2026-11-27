@@ -163,7 +163,7 @@ test('1장 배치: 도로 표지·이름, 하천 말풍선(거리+이름)이 겹
 test('2장 배치: 개체수·거리 칸이 겹치지 않고 지도 안에 들어온다', () => {
   const view = makeView({ lat: 35, lon: 127, radiusM: 50000, width: MAP2.width, height: MAP2.height });
   const sites = Array.from({ length: 12 }, (_, i) => ({
-    name: '조사구역' + i, count: i === 3 ? null : 1000 + i * 111, distance: 1500 + i * 4000, point: [127 + Math.cos(i * 0.6) * 0.09 * (1 + i * 0.3), 35 + Math.sin(i * 0.6) * 0.07 * (1 + i * 0.3)],
+    name: '조사구역' + i, count: i === 3 ? null : 1000 + i * 111, distance: 1500 + i * 4000, point: [127 + Math.cos(i * 0.6) * 0.5 * (1 + i * 0.05), 35 + Math.sin(i * 0.6) * 0.3 * (1 + i * 0.05)],
   }));
   const { items } = layoutBirdSlide(view, { sites, pointName: '나주 육용오리' });
   const names = items.filter(i => i.name.startsWith('도래지'));
@@ -183,19 +183,41 @@ test('2장 배치: 개체수·거리 칸이 겹치지 않고 지도 안에 들�
   assert.ok(textWidth('한글', 20) > textWidth('ab', 20));
 });
 
-test('2장 배치: 조사구역이 아주 많아도 하나도 빼지 않고 모두 올린다', () => {
-  const view = makeView({ lat: 35, lon: 127, radiusM: 50000, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL });
-  const sites = Array.from({ length: 42 }, (_, i) => ({
-    name: '조사구역' + i, count: i % 7 === 0 ? null : 100 * i + 5, distance: 500 + i * 1300,
-    point: [127 + Math.cos(i * 0.9) * 0.05 * (1 + (i % 9) * 0.45), 35 + Math.sin(i * 0.9) * 0.04 * (1 + (i % 9) * 0.45)],
-  }));
-  const { items, scale, overflow } = layoutBirdSlide(view, { sites, pointName: '나주' });
-  assert.equal(items.filter(i => i.name.startsWith('도래지')).length, 42, '전부 올라가야 한다');
-  assert.equal(overflow, 0, '겹침 없이 앉아야 한다');
-  assert.ok(scale < 1 && scale >= 0.42, '많으면 글자를 줄인다: ' + scale);
+test('2장 배치: 실제 경계 데이터로 많아도 하나도 빼지 않고, 칸은 경계점 곁에 두고 글자를 줄여 겹침을 피한다', () => {
+  const [lat, lon] = [35.0161, 126.7108];
+  const view = makeView({ lat, lon, radiusM: 50000, width: MAP2.width, height: MAP2.height, fill: RADIUS_FILL });
+  const sites = surveySites(boundaries, [], lat, lon, view.bbox).map(site => ({ ...site, count: 100 }));
+  assert.ok(sites.length >= 30);
+  const { items, scale } = layoutBirdSlide(view, { sites, pointName: '나주' });
+  const names = items.filter(i => i.name.startsWith('도래지'));
+  assert.equal(names.length, sites.length, '전부 올라가야 한다');
+  assert.ok(scale < 1, '많으면 글자를 줄인다: ' + scale);
   for (const item of items) assert.ok(insideMap(item, MAP2), JSON.stringify(item));
-  const sparse = layoutBirdSlide(view, { sites: sites.slice(0, 5), pointName: '나주' });
-  assert.equal(sparse.scale, 1, '적으면 원본 크기(22pt)를 유지한다');
+  for (let a = 0; a < names.length; a++) for (let b = a + 1; b < names.length; b++) assert.ok(apart(names[a], names[b]), `${names[a].text} / ${names[b].text} 겹침`);
+  // 칸이 자기 경계점에서 멀리 떨어지지 않는다(위치를 바꿔 혼란을 주지 않는다)
+  sites.forEach((site, i) => {
+    const [px, py] = view.toPx(...site.point), box = names[i];
+    const dx = Math.max(box.x - px, 0, px - (box.x + box.w)), dy = Math.max(box.y - py, 0, py - (box.y + box.h));
+    assert.ok(Math.hypot(dx, dy) < 140, `${site.name} 칸이 경계점에서 ${Math.round(Math.hypot(dx, dy))}px 떨어짐`);
+  });
+  const few = layoutBirdSlide(view, { sites: sites.slice(30, 32), pointName: '나주' });
+  assert.equal(few.scale, 1, '적으면 원본 크기(22pt)를 유지한다');
+  // 체크 해제한 구역은 올리지 않는다
+  assert.equal(layoutBirdSlide(view, { sites: sites.slice(0, 7), pointName: '나주' }).items.filter(i => i.name.startsWith('도래지')).length, 7);
+});
+
+test('1장 배치: 체크한 하천·호수만 말풍선, 체크한 노선만 표지', () => {
+  const view = makeView({ lat: 35, lon: 127, radiusM: 3000, width: MAP1.width, height: MAP1.height, fill: RADIUS_FILL });
+  const mk = (name, grade, distance, dx) => ({ name, grade, kind: grade === '호수·저수지' ? 'lake' : 'river', distance, point: [127 + dx, 35.005], area: 5000 });
+  const waters = [mk('가천', '국가하천', 300, 0.004), mk('나천', '지방하천', 500, -0.004), mk('다천', '지방하천', 700, 0.01), mk('라천', '지방하천', 900, -0.01)];
+  const autoRule = layoutWaterSlide(view, { waters, routes: [] });
+  assert.equal(autoRule.bubbled.length, 2, '원본 기준: 같은 거리 구간은 2곳까지');
+  assert.equal(layoutWaterSlide(view, { waters, routes: [], chosenWaters: new Set(waters) }).bubbled.length, 4, '체크하면 기준과 무관하게 모두 올린다');
+  const chosen = layoutWaterSlide(view, { waters, routes: [], chosenWaters: new Set([waters[0], waters[3]]) });
+  assert.deepEqual(chosen.bubbled.map(r => r.name).sort(), ['가천', '라천']);
+  assert.ok(!chosen.items.some(i => i.name === '나천 하천명'));
+  const none = layoutWaterSlide(view, { waters, routes: [], chosenWaters: new Set() });
+  assert.equal(none.bubbled.length, 0);
 });
 
 test('지도 범위: 반경 원이 화면 짧은 변의 80%를 차지한다(fill 지정 시)', () => {

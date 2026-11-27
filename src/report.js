@@ -4,6 +4,8 @@ import { PPI, FACE, MAP2 } from './layout.js';
 
 const SLIDE_W = 13.333333, SLIDE_H = 7.5;
 export const fmtMeters = meters => Math.round(meters).toLocaleString('ko-KR');
+/** 표·노트 공통 거리 표기: 구역 안 / 971 m / 1.7 km */
+export const fmtDistance = meters => (!Number.isFinite(meters) ? '경계 미확인' : meters === 0 ? '구역 안' : meters < 1000 ? Math.round(meters) + ' m' : (meters / 1000).toFixed(1) + ' km');
 export const fmtKm = meters => (!Number.isFinite(meters) ? '경계 미확인' : meters === 0 ? '구역 안' : meters < 50 ? '0.1 km 미만' : (meters / 1000).toFixed(1) + ' km');
 export const fmtCount = count => (count === null ? '자료 없음' : count.toLocaleString('ko-KR'));
 
@@ -54,8 +56,8 @@ export async function buildReport(PptxGenJS, { meta, water, bird }) {
   s1.addImage({ data: water.image, x: 0, y: 0, w: SLIDE_W, h: SLIDE_H, objectName: '배경지도 + 하천·호수·국도·지방도' });
   addItems(pptx, s1, water.items, 0);
   s1.addNotes(noteText(`${where} · 하천·도로 반경 ${water.radiusM / 1000} km`, [
-    ['하천·호수 — 반경 안 전체 (이름 · 구분 · 기준점에서 최단거리). 지도 말풍선은 거리 구간(1·1.5·3·5km)마다 최대 2곳과 10만㎡ 이상 호수·저수지만 표시', water.allWaters.map((r, i) => `${i + 1}. ${r.name} · ${r.grade} · ${r.inside ? '구역 안' : fmtMeters(r.distance) + ' m'}`)],
-    ['국도·지방도', water.allRoutes.map(r => `${r.kind} ${r.number}번 · ${fmtMeters(r.distance)} m`)],
+    ['하천·호수 — 반경 안 전체 (이름 · 구분 · 기준점에서 최단거리). 지도 말풍선은 화면에서 체크한 항목', water.allWaters.map((r, i) => `${i + 1}. ${r.name} · ${r.grade} · ${r.inside ? '구역 안' : fmtDistance(r.distance)}`)],
+    ['국도·지방도 — 반경 안 전체 (이름 · 기준점에서 최단거리)', water.allRoutes.map(r => `${r.kind} ${r.number}번 · ${fmtDistance(r.distance)}`)],
     ['출처', ['하천: 하천 공간정보(기후에너지환경부, 2026-09-14) · 호수·저수지: 국토지리정보원 연속수치지형도(이름이 있는 도형) · 도로: 국도·지방도 중심선', '거리는 기준점에서 GIS 도형 경계까지의 최단 직선거리이며, 면 도형 안이면 구역 안(0)입니다.']],
   ]));
 
@@ -70,7 +72,7 @@ export async function buildReport(PptxGenJS, { meta, water, bird }) {
   s2.addText(`조사 ${bird.monthLabel} · WGS84 ${meta.lat.toFixed(4)}, ${meta.lon.toFixed(4)} · 반경 ${bird.radiusM / 1000}km${bird.countsError ? ' · ※ 개체수 조회 실패(자료 없음으로 표시)' : ''}`, { x: 0.1, y: 7.36, w: 7, h: 0.12, ...footer });
   s2.addText(`국립생물자원관 철새지리정보 · ${bird.credit || '배경 없음'}`, { x: 7.1, y: 7.36, w: 6.1, h: 0.12, align: 'right', ...footer });
   s2.addNotes(noteText(`${where} · 철새도래지 반경 ${bird.radiusM / 1000} km · 조사월 ${bird.monthLabel}`, [
-    ['철새도래지 — 지도 범위에 걸치는 조사구역 전체 (이름 · 경계까지 거리 · 개체수)', bird.allSites.map((s, i) => `${i + 1}. ${s.name} · ${fmtKm(s.distance)} · ${fmtCount(s.count)}${s.count === null && s.reason ? ` (${s.reason})` : ''}`)],
+    ['철새도래지 — 지도 범위에 걸치는 조사구역 전체 (이름 · 경계까지 거리 · 개체수)', bird.allSites.map((s, i) => `${i + 1}. ${s.name} · ${fmtDistance(s.distance)} · ${fmtCount(s.count)}${s.count === null && s.reason ? ` (${s.reason})` : ''}`)],
     ['출처', ['조사구역·경계·월별 개체수: 국립생물자원관 철새지리정보 동시센서스 (https://species.nibr.go.kr/bird/home/geo/index.do)', '거리는 조사구역 경계까지의 최단 직선거리이며 구역 안이면 0입니다. 조사지역명이 일치하지 않는 구역은 개체수를 자료 없음으로 표시합니다.',
       bird.countsError ? `개체수 조회에 실패해 모든 구역을 자료 없음으로 표시했습니다(${bird.countsError}). 합계는 의미가 없습니다.` : `합계 ${bird.total.toLocaleString('ko-KR')}개체 (자료가 있는 ${bird.measured}곳)`]],
   ]));

@@ -31,7 +31,10 @@ table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 14p
 caption { text-align: left; font-weight: 700; padding-bottom: 4px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e2eaec; }
 th { background: #f2f7f8; }
-td:last-child, th:last-child { text-align: right; }
+th.chk, td.chk { width: 34px; text-align: center; }
+td.chk input, th.chk input { width: 18px; height: 18px; margin: 0; cursor: pointer; }
+.cap { font-weight: 400; color: #5b7078; font-size: 13px; }
+tr.off td { color: #8a9aa0; }
 footer { max-width: 1240px; margin: 0 auto; padding: 0 20px 28px; color: #5b7078; font-size: 13px; }
 [hidden] { display: none !important; }
 @media (max-width: 600px) { .slides { grid-template-columns: 1fr; } }

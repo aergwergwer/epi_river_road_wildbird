@@ -120,11 +120,12 @@ try {
       set('pointName',${JSON.stringify(s.pointName)});set('lat','${s.lat}');set('lon','${s.lon}');set('waterRadius','${s.waterRadius}');set('birdRadius','${s.birdRadius}');set('vworldKey','${s.key}');set('waterBackground','${s.waterBg}');set('birdBackground','${s.birdBg}');
       document.getElementById('run').click();})()`);
     await until(cdp, `!document.getElementById('results').hidden || document.getElementById('status').className.includes('error')`, '조회');
+    const rows = id => `[...document.querySelectorAll('#${id} tbody tr')].map(r=>r.innerText.replace(/\\s+/g,' '))`;
+    const checks = id => `(()=>{const b=[...document.querySelectorAll('#${id} tbody input[type=checkbox]')];return {n:b.length,on:b.filter(x=>x.checked).length,cap:document.querySelector('#${id} .cap').textContent}})()`;
     const view = await cdp.evaluate(`({status:document.getElementById('status').textContent,statusClass:document.getElementById('status').className,
-      water:[...document.querySelectorAll('#waterRows tr')].map(r=>r.innerText.replace(/\\s+/g,' ')),
-      road:[...document.querySelectorAll('#roadRows tr')].map(r=>r.innerText.replace(/\\s+/g,' ')),
-      bird:[...document.querySelectorAll('#birdRows tr')].map(r=>r.innerText.replace(/\\s+/g,' ')),
-      caption:document.getElementById('birdCaption').textContent})`);
+      water:${rows('waterTable')}, road:${rows('roadTable')}, bird:${rows('birdTable')},
+      waterChecks:${checks('waterTable')}, roadChecks:${checks('roadTable')}, birdChecks:${checks('birdTable')},
+      caption:document.querySelector('#birdTable caption').textContent})`);
     if (s.expectError) {
       if (!view.statusClass.includes('error') || !/인증키/.test(view.status)) throw new Error('키가 없을 때 안내 오류가 나와야 합니다: ' + view.status);
       report.scenarios.push({ ...s, ms: Date.now() - t0, ...view });
@@ -134,6 +135,24 @@ try {
     for (const id of ['preview1', 'preview2']) {
       const data = await cdp.evaluate(`document.getElementById('${id}').toDataURL('image/png').split(',')[1]`);
       fs.writeFileSync(path.join(outDir, `${s.name}-${id}.png`), Buffer.from(data, 'base64'));
+    }
+    if (!s.expectError && !view.statusClass.includes('error') && view.birdChecks.n > 2) {
+      // 표 체크: 철새도래지는 전부 체크가 기본, 해제하면 개수가 줄고 다시 체크하면 돌아온다
+      if (view.birdChecks.on !== view.birdChecks.n) throw new Error('철새도래지는 전부 체크되어 있어야 합니다: ' + JSON.stringify(view.birdChecks));
+      const click = id => cdp.evaluate(`document.querySelector('#${id} tbody input[type=checkbox]').click()`);
+      await click('birdTable');
+      const off = await cdp.evaluate(checks('birdTable'));
+      if (off.on !== view.birdChecks.n - 1) throw new Error('체크 해제가 반영되지 않았습니다: ' + JSON.stringify(off));
+      await click('birdTable');
+      const back = await cdp.evaluate(checks('birdTable'));
+      if (back.on !== view.birdChecks.n) throw new Error('다시 체크가 반영되지 않았습니다.');
+      if (view.waterChecks.n) {
+        const wBefore = await cdp.evaluate(`document.getElementById('preview1').toDataURL('image/png').length`);
+        await cdp.evaluate(`document.querySelector('#waterTable tbody input[type=checkbox]').click()`);
+        const wAfter = await cdp.evaluate(`document.getElementById('preview1').toDataURL('image/png').length`);
+        await cdp.evaluate(`document.querySelector('#waterTable tbody input[type=checkbox]').click()`);
+        if (wBefore === wAfter) throw new Error('하천 체크 변경이 미리보기에 반영되지 않았습니다.');
+      }
     }
     let pptxBytes = 0;
     if (!view.statusClass.includes('error')) {
