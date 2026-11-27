@@ -1,0 +1,11 @@
+{
+  "name": "epi-river-road-wildbird",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "위치(주소·위경도)를 입력하면 인근 하천·도로와 철새도래지 현황을 PPTX 2장으로 만드는 브라우저 웹앱",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "tiles": "python3 tools/build_tiles.py --src data-src --out assets/tiles"
+  }
+}
