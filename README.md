@@ -81,3 +81,7 @@ python3 tools/make_fixture.py --src data-src --out test/fixtures/expected.json  
 
 - 두 앱(하천·도로 / 철새 리포트)을 하나로 합치고, 두 개의 PPTX를 ZIP으로 묶던 방식을 1개 PPTX(2장)로 바꿨습니다.
 - 제거: Leaflet 기반 철새 화면, 숨은 iframe 연동, 읽기만 하고 쓰지 않던 `sessionStorage` 핸드오프, 워커의 사용하지 않던 `/api/geocode`·`/api/maps/vworld`, 워커에 내장돼 있던 경계 데이터 사본, 이전 AI 호스팅 도메인 상수, Overpass 기반 "일반지도"와 브이월드 도로 API, Plus Code 입력, KML·CSV 내보내기. 필요하면 `baseline` 커밋(원본 소스)에서 되살릴 수 있습니다.
+
+## 화면 디자인
+
+웹앱 화면은 [KRDS(범정부 UI/UX 디자인시스템)](https://www.krds.go.kr)의 시각 기준을 따릅니다: 정부 청색(#256EF4) 중심의 색, 회색 스케일, 본문 17px, 버튼 48px·라운드 6px, 입력 48px·라운드 8px, 카드 라운드 12px, 포커스 링, 서체 Pretendard GOV(불러오지 못하면 Pretendard → 맑은 고딕). 스타일은 `src/style.css`의 CSS 변수에 모여 있습니다. 이는 화면만의 변경이며 PPTX 안의 색·글꼴은 원본 웹앱 양식 그대로입니다. KRDS 공식 Figma 파일은 로봇 차단으로 직접 열 수 없어, KRDS 누리집과 공개된 토큰 정리를 참고했습니다.

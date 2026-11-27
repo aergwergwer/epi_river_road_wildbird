@@ -173,6 +173,10 @@ try {
       if (before === after) throw new Error('GIS 체크 해제가 지도에 반영되지 않았습니다.');
       await cdp.evaluate(`document.querySelector('#gisTable tbody input[type=checkbox]').click()`);
     }
+    if (s.gis) { // 화면 디자인 확인용 전체 화면 캡처
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+      fs.writeFileSync(path.join(outDir, s.name + '-page.png'), Buffer.from(shot.data, 'base64'));
+    }
     let pptxBytes = 0;
     if (!view.statusClass.includes('error')) {
       await cdp.evaluate(`document.getElementById('save').click()`);
