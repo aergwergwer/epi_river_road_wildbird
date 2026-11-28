@@ -24,6 +24,8 @@ function addItems(pptx, slide, items, topIn) {
       ...box, shape: shapes[item.shape], rectRadius: item.shape === 'roundRect' ? (Math.min(box.w, box.h) * 0.16) : undefined,
       fill, line, color: item.color, fontSize: item.pt, bold: item.bold, fontFace: item.face || FACE,
       align: 'center', valign: 'middle', margin: 0, objectName: item.name,
+      // 글씨 크기를 키우면 칸도 따라 커지도록: '텍스트에 맞게 도형 크기 조정' + 자동 줄 바꿈 끔(파일의 각 도형 속성이며 PowerPoint 설정은 바꾸지 않는다)
+      fit: 'resize', wrap: false,
     });
   }
 }
